@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import test from "node:test";
 import { createHttpReceiver } from "../server/http.ts";
 import { resolveEndpoint } from "../src/endpoint.ts";
-import { createHttpDelivery } from "../src/http-delivery.ts";
+import { createHttpDelivery, HttpDeliveryError } from "../src/http-delivery.ts";
 import type { Envelope } from "../src/records.ts";
 import { compileProfile } from "../tools/profile.ts";
 
@@ -180,4 +180,35 @@ test("requires a verified bearer token with the configured write scope before in
 		204,
 	);
 	assert.deepEqual(accepted, [record]);
+});
+
+test("durable HTTP delivery waits for the agreed acknowledgement and classifies retryable replies", async (t) => {
+	let response = new Response(null, { status: 202 });
+	t.mock.method(globalThis, "fetch", async () => response);
+	const send = createHttpDelivery("https://collector.example/events", {
+		requireAcknowledgement: true,
+	});
+	const signal = new AbortController().signal;
+	const isRetryable = (error: unknown) =>
+		error instanceof HttpDeliveryError && error.retryable;
+	await assert.rejects(send(record, signal), isRetryable);
+
+	response = new Response(null, {
+		status: 429,
+		headers: { "retry-after": "30" },
+	});
+	await assert.rejects(
+		send(record, signal),
+		(error: unknown) =>
+			error instanceof HttpDeliveryError &&
+			error.retryable &&
+			error.retryAfterMs === 30_000,
+	);
+	response = new Response(null, { status: 409 });
+	await assert.rejects(
+		send(record, signal),
+		(error: unknown) => error instanceof HttpDeliveryError && !error.retryable,
+	);
+	response = new Response(null, { status: 204 });
+	await send(record, signal);
 });

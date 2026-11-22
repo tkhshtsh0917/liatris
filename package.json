@@ -9,7 +9,8 @@
     "lint": "biome check src tests tools server demo schema/profile.schema.json",
     "format": "biome format --write src tests tools server demo schema/profile.schema.json",
     "demo:build": "tsc -p tsconfig.demo.json",
-    "demo": "npm run demo:build && node demo/server.ts"
+    "demo": "npm run demo:build && node demo/server.ts",
+    "test:browser": "npm run demo:build && node --test tests/browser/delivery.ts"
   },
   "dependencies": {
     "@decimalturn/toml-patch": "3.3.3",
@@ -19,6 +20,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.6.2",
     "@types/node": "24.19.2",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "playwright": "1.64.1"
   }
 }
