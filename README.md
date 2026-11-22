@@ -6,6 +6,8 @@ Configurable browser event collection for User Behavior Insights, powered by Rus
 
 Liatris uses a Rust/WASM session policy and a TypeScript collector. Configure event names and fields in TOML, YAML, or JSON, then call the collector from the application when each event occurs. The profile declares what to collect. The application supplies when it happened and its context, such as the result ID and displayed rank.
 
+Start with the [integration guide](docs/integration.md) to connect your profile, search UI, and event receiver.
+
 ## Run the local demo
 
 Install the Rust toolchain from [rust-toolchain.toml](rust-toolchain.toml) and Node.js from [mise.toml](mise.toml).

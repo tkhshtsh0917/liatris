@@ -6,6 +6,8 @@ Rust と WebAssembly を使う、設定可能な User Behavior Insights 向け�
 
 Liatris は Rust/WASM のセッション判定と TypeScript のコレクターを使います。TOML、YAML、JSON で収集するイベント名と項目を設定します。アプリケーションはイベントが発生した時点でコレクターを呼び、結果 ID や表示順位などの文脈を渡します。
 
+既存サービスに組み込む場合は、[導入ガイド](docs/ja/integration.md)に沿って、プロファイル、検索画面、受信 API をつなぎます。
+
 ## ローカルデモを実行する
 
 [rust-toolchain.toml](rust-toolchain.toml) の Rust ツールチェーンと [mise.toml](mise.toml) の Node.js をインストールします。
