@@ -14,3 +14,11 @@
 Recent click-log studies motivate recording the displayed list and exposure independently of clicks in M2. Statistical bias correction and ranking models belong downstream, where experiments and denominators are available. [Baidu click-log study](https://arxiv.org/abs/2404.02543) · [Query-level click propensity study](https://arxiv.org/abs/2502.11414)
 
 A queued browser Beacon and a durable receiver acknowledgement have different meanings. M3 treats receipt confirmation and consent as properties to test under failures. M5 follows the standardization work on privacy-preserving aggregation as a separate experiment. [W3C Beacon](https://www.w3.org/TR/beacon/) · [IETF DAP draft](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/)
+
+## Security and privacy release conditions
+
+- **M2.** Capture search metrics without raw query text by default. Review each new field's purpose, data classification, destination and retention. Include proxy, application, debugging and backup paths in retention and deletion reviews.
+- **M3.** Test cross-tab revocation and cleanup of identifiers and queued records, including failures. Preserve capture IDs on retries while bounding queue time and size. Apply request and concurrency limits before expensive verification and quotas per authenticated tenant. Reauthorize retries and confirm that authentication material never enters queue or sink logs.
+- **M4.** Integrate a trusted credential issuer or store, enforce scoped credentials and key rotation, and verify the deployment's TLS and CORS settings. For external intake, test replay and abuse controls independently of token validity. Verify the actual tag and WASM distribution along with dependency and runtime patch checks.
+
+See [security and privacy](security.md) for the current controls and integration boundaries.
