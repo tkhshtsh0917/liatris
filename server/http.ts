@@ -9,7 +9,7 @@ import type { Profile } from "../src/profile.ts";
 import { type Envelope, maxRecordBytes } from "../src/records.ts";
 import { createIntakeAccess, type IntakeAccess } from "./access.ts";
 import { EventConflictError } from "./intake-error.ts";
-import { validateRecord } from "./validate.ts";
+import { isUuidV4, validateRecord } from "./validate.ts";
 
 type HttpReceiverOptions = IntakeAccess & { bodyTimeoutMs?: number };
 const bodyTimedOut = Symbol("body timed out");
@@ -141,9 +141,6 @@ export function createHttpReceiver(
 	};
 }
 
-const uuid =
-	/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-
 async function acceptBatch(
 	value: unknown,
 	profile: Profile,
@@ -159,7 +156,7 @@ async function acceptBatch(
 	const ids = new Set<string>();
 	for (const item of value) {
 		const id: unknown = item?.event_id;
-		if (typeof id !== "string" || !uuid.test(id) || ids.has(id)) return;
+		if (!isUuidV4(id) || ids.has(id)) return;
 		ids.add(id);
 	}
 

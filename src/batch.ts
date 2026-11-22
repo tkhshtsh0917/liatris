@@ -24,7 +24,8 @@ export function readBatchReceipts(
 	if (!Array.isArray(value) || value.length !== records.length)
 		throw new Error("incomplete batch receipt");
 	const pending = new Set(records.map(({ event_id }) => event_id));
-	return value.map((item) => {
+	const receipts: BatchReceipt[] = [];
+	for (const item of value) {
 		const { event_id, status } = readObject(item);
 		if (
 			typeof event_id !== "string" ||
@@ -33,6 +34,7 @@ export function readBatchReceipts(
 		) {
 			throw new Error("invalid batch receipt");
 		}
-		return { event_id, status };
-	});
+		receipts.push({ event_id, status });
+	}
+	return receipts;
 }

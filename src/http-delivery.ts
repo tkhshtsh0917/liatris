@@ -112,13 +112,13 @@ export function createHttpBatchDelivery(
 				const { value, done } = await reader.read();
 				if (done) break;
 				bytes += value.byteLength;
-				if (bytes > 8192) {
-					await reader.cancel();
-					throw new Error("batch receipt too large");
-				}
+				if (bytes > 8192) throw new Error("batch receipt too large");
 				json += decoder.decode(value, { stream: true });
 			}
 			return readBatchReceipts(JSON.parse(json + decoder.decode()), records);
+		} catch (error) {
+			void reader.cancel().catch(() => {});
+			throw error;
 		} finally {
 			reader.releaseLock();
 		}

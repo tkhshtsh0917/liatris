@@ -6,7 +6,7 @@ import { acceptsUbi, isCaptureTime } from "./ubi.ts";
 const uuid =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-function isUuid(value: unknown): value is string {
+export function isUuidV4(value: unknown): value is string {
 	return typeof value === "string" && uuid.test(value);
 }
 
@@ -20,7 +20,7 @@ function checkQuery(
 
 	const { query_attributes, ...rest } = payload;
 	const { session_id, ...fields } = readObject(query_attributes);
-	if (!isUuid(session_id)) throw new TypeError("invalid query session");
+	if (!isUuidV4(session_id)) throw new TypeError("invalid query session");
 
 	readQuery(profile, { ...rest, query_attributes: fields });
 }
@@ -31,7 +31,7 @@ function checkEvent(
 	metadata: unknown,
 ) {
 	const { session_id, action_name, ...rest } = payload;
-	if (!isUuid(session_id) || typeof action_name !== "string") {
+	if (!isUuidV4(session_id) || typeof action_name !== "string") {
 		throw new TypeError("invalid event session or name");
 	}
 
@@ -55,7 +55,7 @@ export function validateRecord(
 
 	const { event_id, profile_hash, kind, metadata } = record;
 	if (
-		!isUuid(event_id) ||
+		!isUuidV4(event_id) ||
 		profile_hash !== profileHash ||
 		(kind !== "query" && kind !== "event")
 	) {

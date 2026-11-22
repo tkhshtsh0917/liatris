@@ -5,6 +5,7 @@ import test from "node:test";
 import { createHttpReceiver } from "../server/http.ts";
 import {
 	batchMediaType,
+	maxBatchBytes,
 	maxBatchEvents,
 	readBatchReceipts,
 } from "../src/batch.ts";
@@ -42,13 +43,14 @@ test("rejects partial, duplicate, unknown, and malformed receipts", () => {
 	]);
 	for (const receipts of [
 		[accepted],
+		Array(2),
 		[accepted, accepted],
 		[accepted, { ...retry, event_id: event().event_id }],
 		[accepted, { ...retry, status: "other" }],
 	]) {
 		assert.throws(
 			() => readBatchReceipts(receipts, [first, second]),
-			/batch receipt/,
+			/batch receipt|expected a plain object/,
 		);
 	}
 });
@@ -79,6 +81,26 @@ test("the HTTP sender preserves the batch and requires a receipt for every event
 		send([record], new AbortController().signal),
 		/incomplete batch receipt/,
 	);
+});
+
+test("cancels an oversized receipt without reading the rest of its stream", async (t) => {
+	let cancelled = false;
+	const body = new ReadableStream<Uint8Array>({
+		start(controller) {
+			controller.enqueue(new Uint8Array(8193));
+		},
+		cancel() {
+			cancelled = true;
+		},
+	});
+	t.mock.method(globalThis, "fetch", async () => new Response(body));
+	const send = createHttpBatchDelivery("https://collector.example/api");
+
+	await assert.rejects(
+		send([event()], new AbortController().signal),
+		/batch receipt too large/,
+	);
+	assert.equal(cancelled, true);
 });
 
 test("reports acceptance, rejection and transient failure independently after the sink settles", async (t) => {
@@ -122,14 +144,21 @@ test("reports acceptance, rejection and transient failure independently after th
 	]) {
 		assert.equal((await post(entries)).status, 400);
 	}
+	const oversized = { ...event(), metadata: { sample: "あ".repeat(11_000) } };
+	const tooLarge = {
+		...event(),
+		metadata: { sample: "x".repeat(maxBatchBytes) },
+	};
+	assert.equal((await post([tooLarge])).status, 413);
 	assert.deepEqual(seen, []);
 
-	const response = await post([good, invalid, failed]);
+	const response = await post([good, invalid, failed, oversized]);
 	assert.equal(response.status, 200);
 	assert.deepEqual(await response.json(), [
 		{ event_id: good.event_id, status: "accepted" },
 		{ event_id: invalid.event_id, status: "rejected" },
 		{ event_id: failed.event_id, status: "retry" },
+		{ event_id: oversized.event_id, status: "rejected" },
 	]);
 	assert.deepEqual(seen, [good.event_id]);
 });
