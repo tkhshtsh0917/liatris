@@ -1,5 +1,5 @@
 [tools]
-node = "24.22.1"
+node = "24.22.3"
 
 [tasks.wasm]
 run = "cargo build --locked --release --target wasm32-unknown-unknown"
