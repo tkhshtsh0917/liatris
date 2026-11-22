@@ -17,6 +17,8 @@ A queued browser Beacon and a durable receiver acknowledgement have different me
 
 M2 includes opt-in duration metrics and tests for inactivity and missing observations. The demo implements result dwell and session elapsed time at dwell checkpoints. [Metric definitions](event-contracts.md#duration-and-search-metrics)
 
+See [search interaction log analysis](log-analysis.md) for unbiased ranking, dense retrieval training, and session-level experiments.
+
 ## Security and privacy release conditions
 
 - **M2.** Capture search metrics without raw query text by default. Review each new field's purpose, data classification, destination and retention. Include proxy, application, debugging and backup paths in retention and deletion reviews.
