@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { readFields } from "../src/fields.ts";
 import { compileProfile } from "../tools/profile.ts";
 
 const yaml = await readFile(
@@ -134,5 +135,40 @@ test("the CLI reads at most the profile limit plus one byte", async (t) => {
 	assert.equal(
 		await readFile(output, "utf8"),
 		compileProfile(yaml, "yaml").json,
+	);
+});
+
+test("numeric metadata supports an inclusive minimum", () => {
+	const { profile } = compile({
+		events: {
+			sample: {
+				fields: {
+					count: { type: "integer", minimum: 0, required: true },
+					ratio: { type: "number", minimum: 0.5 },
+				},
+			},
+		},
+	});
+	const fields = profile.events.sample.fields;
+	assert.deepEqual(readFields({ count: 0, ratio: 0.5 }, fields), {
+		count: 0,
+		ratio: 0.5,
+	});
+	assert.throws(
+		() => readFields({ count: -1 }, fields),
+		/invalid custom field/,
+	);
+	assert.throws(
+		() => readFields({ count: 0, ratio: 0.25 }, fields),
+		/invalid custom field/,
+	);
+	assert.throws(() =>
+		compile({
+			events: {
+				sample: {
+					fields: { label: { type: "string", maxLength: 20, minimum: 0 } },
+				},
+			},
+		}),
 	);
 });

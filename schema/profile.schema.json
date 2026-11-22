@@ -158,8 +158,21 @@
 				},
 				"required": {
 					"type": "boolean"
+				},
+				"minimum": {
+					"type": "number"
 				}
 			},
+			"allOf": [
+				{
+					"if": {
+						"properties": {
+							"type": { "enum": ["string", "boolean"] }
+						}
+					},
+					"then": { "not": { "required": ["minimum"] } }
+				}
+			],
 			"if": {
 				"properties": {
 					"type": {

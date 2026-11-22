@@ -1,7 +1,8 @@
 /** Scalar types supported in collection profile fields. */
 export type FieldRule = { required?: boolean } & (
 	| { type: "string"; maxLength: number }
-	| { type: "integer" | "number" | "boolean" }
+	| { type: "integer" | "number"; minimum?: number }
+	| { type: "boolean" }
 );
 
 export const defaultMinVisiblePercent = 50;

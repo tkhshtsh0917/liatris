@@ -48,9 +48,14 @@ function matchesRule(value: unknown, rule: FieldRule): value is Scalar {
 		case "string":
 			return typeof value === "string" && value.length <= rule.maxLength;
 		case "integer":
-			return Number.isSafeInteger(value);
 		case "number":
-			return Number.isFinite(value);
+			return (
+				typeof value === "number" &&
+				(rule.type === "integer"
+					? Number.isSafeInteger(value)
+					: Number.isFinite(value)) &&
+				(rule.minimum === undefined || value >= rule.minimum)
+			);
 		case "boolean":
 			return typeof value === "boolean";
 	}
