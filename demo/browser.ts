@@ -2,12 +2,12 @@ import { createCollector, createHttpDelivery } from "../src/collector.ts";
 import { observeEngagement } from "../src/engagement.ts";
 import { observeResultImpressions } from "../src/impressions.ts";
 import type { Profile } from "../src/profile.ts";
+import { createQueuedDelivery } from "../src/queued-delivery.ts";
 import type { EventInput } from "../src/records.ts";
 import {
 	createSearchMeasurement,
 	type DisplayedSearchResults,
 } from "../src/search-measurement.ts";
-import { openSessionStore } from "../src/session-store.ts";
 
 type Target = { id: string; title: string };
 const catalog: Record<string, Target[]> = {
@@ -30,13 +30,18 @@ const { profile, sha256 } = (await config.json()) as {
 const collector = createCollector({
 	profile,
 	profileHash: sha256,
-	openStore: openSessionStore,
+	queue: createQueuedDelivery({
+		profile,
+		profileHash: sha256,
+		send: createHttpDelivery(profile.endpoint, {
+			requireAcknowledgement: true,
+		}),
+	}),
 	async loadWasm() {
 		const response = await fetch("/session.wasm", { credentials: "omit" });
 		if (!response.ok) throw new Error("could not load the session module");
 		return response.arrayBuffer();
 	},
-	deliver: createHttpDelivery(profile.endpoint),
 });
 
 function element<T extends Element>(selector: string): T {

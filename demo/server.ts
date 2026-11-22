@@ -50,6 +50,8 @@ for (const name of [
 	"engagement",
 	"fields",
 	"impressions",
+	"outbox-storage",
+	"queued-delivery",
 	"http-delivery",
 	"profile",
 	"records",

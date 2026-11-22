@@ -1,4 +1,5 @@
 import type { Profile } from "./profile.ts";
+import type { QueuedDelivery } from "./queued-delivery.ts";
 import {
 	type Envelope,
 	type EventInput,
@@ -13,15 +14,16 @@ import type { SessionStore } from "./session-store.ts";
 export { createHttpDelivery } from "./http-delivery.ts";
 
 export type Delivery = (record: Envelope, signal: AbortSignal) => Promise<void>;
-type Status = "sent" | "no-consent" | "query-text-disabled";
+type Status = "sent" | "queued" | "no-consent" | "query-text-disabled";
 
 type Options = {
 	profile: Profile;
 	profileHash: string;
-	openStore: () => Promise<SessionStore>;
 	loadWasm: () => Promise<BufferSource>;
-	deliver: Delivery;
-};
+} & (
+	| { openStore: () => Promise<SessionStore>; deliver: Delivery; queue?: never }
+	| { queue: QueuedDelivery; openStore?: never; deliver?: never }
+);
 
 const placeholderId = "00000000-0000-4000-8000-000000000000";
 
@@ -46,7 +48,13 @@ export function createCollector({
 	openStore,
 	loadWasm,
 	deliver,
+	queue,
 }: Options) {
+	const openSessionStore = queue?.openSessionStore ?? openStore;
+	if (!openSessionStore || (!queue && !deliver)) {
+		throw new TypeError("a delivery and session store are required");
+	}
+	const initializeStore = openSessionStore;
 	let consent: AbortController | undefined;
 	let session: Session | undefined;
 	let sessionTail = Promise.resolve();
@@ -74,18 +82,41 @@ export function createCollector({
 				throw new Error(
 					"session cleanup must complete before collection resumes",
 				);
-			consent ??= new AbortController();
+			if (consent) return;
+			const controller = new AbortController();
+			if (queue) {
+				const signal = await withinSession(() => queue.grant());
+				if (version !== consentVersion || signal.aborted) return;
+				signal.addEventListener(
+					"abort",
+					() => {
+						controller.abort();
+						if (consent === controller) {
+							consent = undefined;
+							lastActivity = undefined;
+							session = undefined;
+						}
+					},
+					{ once: true },
+				);
+			}
+			consent = controller;
+			queue?.resume();
 			return;
 		}
 
 		consent?.abort();
 		consent = undefined;
+		queue?.suspend();
 		lastActivity = undefined;
 		cleanupRequired = true;
 		await withinSession(async () => {
 			cleanupRequired = true;
-			store ??= await openStore();
-			await clearSession(store, profile);
+			if (queue) await queue.revoke();
+			else {
+				store ??= await initializeStore();
+				await clearSession(store, profile);
+			}
 			session = undefined;
 			cleanupRequired = false;
 		});
@@ -138,7 +169,7 @@ export function createCollector({
 				if (!session) {
 					const wasm = await loadWasm();
 					if (signal.aborted) return;
-					store ??= await openStore();
+					store ??= await initializeStore();
 					if (signal.aborted) return;
 					session = await createSessionManager(
 						wasm,
@@ -151,6 +182,8 @@ export function createCollector({
 				const activity = await session.recordActivity(now);
 				if (!signal.aborted) lastActivity = activity;
 				return activity;
+			}).catch((error: unknown) => {
+				if (!signal.aborted) throw error;
 			}));
 		if (!assigned || signal.aborted) return "no-consent";
 
@@ -159,11 +192,13 @@ export function createCollector({
 		setSessionId(record, assigned.sessionId);
 
 		try {
-			await deliver(record, signal);
+			if (queue) await queue.enqueue(record, signal);
+			else await deliver?.(record, signal);
 		} catch (error) {
 			if (!signal.aborted) throw error;
 		}
-		return signal.aborted ? "no-consent" : "sent";
+		if (signal.aborted) return "no-consent";
+		return queue ? "queued" : "sent";
 	}
 
 	function createObservation(
