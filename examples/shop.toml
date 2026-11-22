@@ -16,6 +16,28 @@ type = "string"
 maxLength = 100
 required = true
 
+[events.click.fields.detail_view_id]
+type = "string"
+maxLength = 100
+
+[events.result_dwell.fields.result_set]
+type = "string"
+maxLength = 100
+required = true
+
+[events.result_dwell.fields.detail_view_id]
+type = "string"
+maxLength = 100
+required = true
+
+[events.result_dwell.fields.engaged_ms]
+type = "integer"
+required = true
+
+[events.result_dwell.fields.session_elapsed_ms]
+type = "integer"
+required = true
+
 [events.add_cart]
 
 [extensions.query_attributes.experiment_id]

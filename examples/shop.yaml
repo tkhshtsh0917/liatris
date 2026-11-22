@@ -9,9 +9,16 @@ events:
   click:
     fields:
       result_set: { type: string, maxLength: 100, required: true }
+      detail_view_id: { type: string, maxLength: 100 }
   result_impression:
     fields:
       result_set: { type: string, maxLength: 100, required: true }
+  result_dwell:
+    fields:
+      result_set: { type: string, maxLength: 100, required: true }
+      detail_view_id: { type: string, maxLength: 100, required: true }
+      engaged_ms: { type: integer, required: true }
+      session_elapsed_ms: { type: integer, required: true }
   add_cart: {}
 extensions:
   query_attributes:

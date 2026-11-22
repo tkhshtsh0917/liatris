@@ -1,4 +1,5 @@
 import { createCollector, createHttpDelivery } from "../src/collector.ts";
+import { observeEngagement } from "../src/engagement.ts";
 import { observeResultImpressions } from "../src/impressions.ts";
 import type { Profile } from "../src/profile.ts";
 import type { EventInput } from "../src/records.ts";
@@ -46,6 +47,19 @@ const searchTerm = element<HTMLSelectElement>("#term");
 const results = element<HTMLUListElement>("#results");
 const status = element<HTMLParagraphElement>("#status");
 const summary = element<HTMLParagraphElement>("#summary");
+const detail = element<HTMLElement>("#detail");
+const detailTitle = element<HTMLHeadingElement>("#detail-title");
+const closeDetailButton = element<HTMLButtonElement>("#close-detail");
+let engagement: ReturnType<typeof observeEngagement> | undefined;
+
+function closeDetail(flush: boolean) {
+	if (flush) engagement?.checkpoint();
+	engagement?.close();
+	engagement = undefined;
+	detail.hidden = true;
+}
+
+closeDetailButton.addEventListener("click", () => closeDetail(true));
 
 async function report(operation: Promise<string>) {
 	try {
@@ -73,6 +87,49 @@ function resultEvent(
 	};
 }
 
+function openDetail(
+	display: Display | undefined,
+	target: Target,
+	ordinal: number,
+) {
+	closeDetail(true);
+	detailTitle.textContent = target.title;
+	detail.hidden = false;
+	closeDetailButton.focus();
+	if (!display) return;
+
+	const detailId = crypto.randomUUID();
+	const event = resultEvent(display, target, ordinal);
+	const metadata = { ...event.metadata, detail_view_id: detailId };
+	void report(collector.trackEvent("click", { ...event, metadata }));
+
+	const observation = collector.bindObservation();
+	if (!observation) return;
+
+	engagement = observeEngagement({
+		signal: observation.signal,
+		onCheckpoint(engagedMs) {
+			const checkpointAt = Date.now();
+			void observation
+				.sessionElapsedMs(checkpointAt)
+				.then((elapsed) => {
+					if (elapsed === undefined) return;
+					return observation.trackEvent("result_dwell", {
+						...event,
+						metadata: {
+							...metadata,
+							engaged_ms: engagedMs,
+							session_elapsed_ms: Math.floor(elapsed / 1000) * 1000,
+						},
+					});
+				})
+				.catch(() => {
+					status.textContent = "Dwell capture failed.";
+				});
+		},
+	});
+}
+
 function showResults(display: Display | undefined, hits: Target[]) {
 	impressions?.close();
 	impressions =
@@ -94,12 +151,7 @@ function showResults(display: Display | undefined, hits: Target[]) {
 		const button = document.createElement("button");
 		button.type = "button";
 		button.textContent = hit.title;
-		button.addEventListener("click", () => {
-			if (display)
-				void report(
-					collector.trackEvent("click", resultEvent(display, hit, index + 1)),
-				);
-		});
+		button.addEventListener("click", () => openDetail(display, hit, index + 1));
 		item.append(button);
 		return { item, button };
 	});
@@ -110,6 +162,7 @@ function showResults(display: Display | undefined, hits: Target[]) {
 }
 
 consent.addEventListener("change", () => {
+	closeDetail(false);
 	showResults(undefined, []);
 	summary.textContent = "";
 	void report(
@@ -123,6 +176,7 @@ consent.addEventListener("change", () => {
 
 form.addEventListener("submit", (event) => {
 	event.preventDefault();
+	closeDetail(true);
 
 	const queryId = consent.checked ? crypto.randomUUID() : undefined;
 	const term = searchTerm.value;

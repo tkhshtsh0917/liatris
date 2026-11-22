@@ -37,6 +37,7 @@ function setSessionId(record: Envelope, sessionId: string) {
 }
 
 type Session = Awaited<ReturnType<typeof createSessionManager>>;
+type Activity = Awaited<ReturnType<Session["recordActivity"]>>;
 
 /** Captures explicitly declared events after the host grants consent. */
 export function createCollector({
@@ -52,6 +53,7 @@ export function createCollector({
 	let store: SessionStore | undefined;
 	let consentVersion = 0;
 	let cleanupRequired = false;
+	let lastActivity: Activity | undefined;
 
 	function withinSession<T>(operation: () => Promise<T>) {
 		const running = sessionTail.then(operation);
@@ -78,6 +80,7 @@ export function createCollector({
 
 		consent?.abort();
 		consent = undefined;
+		lastActivity = undefined;
 		cleanupRequired = true;
 		await withinSession(async () => {
 			cleanupRequired = true;
@@ -95,8 +98,9 @@ export function createCollector({
 			payload: Envelope["payload"];
 			metadata: NonNullable<Envelope["metadata"]>;
 		},
+		anchor?: Activity,
+		now = Date.now(),
 	): Promise<Status> {
-		const now = Date.now();
 		const record: Envelope = {
 			event_id: placeholderId,
 			profile_hash: profileHash,
@@ -119,23 +123,28 @@ export function createCollector({
 			throw new RangeError("record too large");
 		}
 
-		const assigned = await withinSession(async () => {
-			if (signal.aborted) return;
-			if (!session) {
-				const wasm = await loadWasm();
+		const assigned =
+			anchor ??
+			(await withinSession(async () => {
 				if (signal.aborted) return;
-				store ??= await openStore();
+				lastActivity = undefined;
+				if (!session) {
+					const wasm = await loadWasm();
+					if (signal.aborted) return;
+					store ??= await openStore();
+					if (signal.aborted) return;
+					session = await createSessionManager(
+						wasm,
+						store,
+						profile,
+						profile.session.inactivityMinutes,
+					);
+				}
 				if (signal.aborted) return;
-				session = await createSessionManager(
-					wasm,
-					store,
-					profile,
-					profile.session.inactivityMinutes,
-				);
-			}
-			if (signal.aborted) return;
-			return session.recordActivity(now);
-		});
+				const activity = await session.recordActivity(now);
+				if (!signal.aborted) lastActivity = activity;
+				return activity;
+			}));
 		if (!assigned || signal.aborted) return "no-consent";
 
 		record.event_id = crypto.randomUUID();
@@ -151,6 +160,33 @@ export function createCollector({
 
 	return {
 		setConsent,
+		/** Binds later observations to the most recent activity queued in this collector. */
+		bindObservation() {
+			const signal = consent?.signal;
+			if (!signal) return;
+			const anchor = sessionTail.then(() => lastActivity);
+
+			return {
+				signal,
+				async trackEvent(
+					name: string,
+					value: EventInput = {},
+				): Promise<Status | "no-session"> {
+					const observedAt = Date.now();
+					const activity = await anchor;
+					if (signal.aborted) return "no-consent";
+					if (!activity) return "no-session";
+
+					const data = readEvent(profile, name, value);
+					return capture(signal, "event", data, activity, observedAt);
+				},
+				async sessionElapsedMs(at = Date.now()) {
+					const activity = await anchor;
+					if (!signal.aborted && activity)
+						return Math.max(0, at - activity.startedAtMs);
+				},
+			};
+		},
 		async trackQuery(value: QueryInput): Promise<Status> {
 			if (!consent) return "no-consent";
 			if (!profile.allowQueryText) return "query-text-disabled";

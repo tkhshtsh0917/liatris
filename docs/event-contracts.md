@@ -39,18 +39,18 @@ The application calls `trackEvent("job_saved", { metadata: { job_id } })` after 
 
 Test delayed responses, rate-limited or retried actions, repeated rendering, virtualized lists and cross-tab behavior at the integration points. A durable delivery ID and a business ID, such as an order ID, serve separate deduplication purposes.
 
-## Proposed duration and search metrics
+## Duration and search metrics
 
-The following M2 measurements are opt-in design targets. The current collector records event timestamps and session IDs.
+The collector provides opt-in engagement timing. The demo records whole-second deltas as `result_dwell` and supplies the original click session, query, result set, ordinal, item and detail-view ID. The remaining search metrics are M2 design targets.
 
 | Metric | Observation and aggregation |
 | --- | --- |
-| Session elapsed time | Time from the assigned session start to the event. A fresh session starts at zero. This is a wall-clock duration for funnel analysis and can include idle periods. |
+| Session elapsed time | Time from the assigned session start to the event. A fresh session starts at zero. This is a wall-clock duration for funnel analysis and can include idle periods. The demo uses `session_elapsed_ms` at dwell checkpoints. |
 | Engaged time on a detail view | Sum eligible intervals for one rendered detail view. Start after consent when the view is visible and focused. End the interval at blur, hidden state, route exit, consent withdrawal or the configured inactivity cutoff, whichever comes first. |
 | Search-result dwell | Attribute engaged time on an instrumented destination to the originating result click. Keep click-to-return elapsed time as a separate metric. Treat an unobserved destination or missing return as unknown. |
 | Time to first click | From rendering a particular result set until its first click. Report no-click views and the observation window separately. |
 | Search outcomes | Measure zero-result rate per rendered set, impression-based CTR by displayed rank, reformulations per search journey and downstream conversion within a declared attribution window. Record denominators and observation coverage. |
 
-Use a monotonic clock for intervals within one document. Accrue only up to the last qualifying activity plus the inactivity window, even if a background timer runs hours late. The cutoff limits the estimate during unattended focus and can undercount quiet reading. Resume with a fresh interval after activity, route changes or restoration from the back-forward cache. Keep page-view, click and result-set IDs distinct across tabs. Do not sum overlapping tab intervals to estimate time per person.
+Use `observeEngagement` for one rendered detail view and pass the consent signal returned by `bindObservation`. The helper default inactivity cutoff is 60 seconds and can be set with `idleMs`. Close the observer on navigation, and checkpoint first when the view exits with consent. Use a monotonic clock for intervals within one document. Accrue only up to the last qualifying activity plus the inactivity window, even if a background timer runs hours late. The cutoff limits the estimate during unattended focus and can undercount quiet reading. A qualifying input renews the remaining idle budget. Route changes start a fresh measurement. Visibility and back-forward restoration resume measurement within the remaining budget. Keep page-view, click and result-set IDs distinct across tabs. Do not sum overlapping tab intervals to estimate time per person.
 
 Attach coarse duration deltas to eligible checkpoints. Exclude timing checkpoints from session renewal. Discard unsent intervals on withdrawal. Keep input contents, key values and pointer paths out of timing records. Test suspension, hidden tabs, three-hour absences, session expiry, missing exits and retries before enabling the metrics. [GA4 engagement](https://support.google.com/analytics/answer/11109416) · [Client and server dwell-time study](https://www.microsoft.com/en-us/research/publication/comparing-client-server-dwell-time-estimates-click-level-satisfaction-prediction/) · [Page Lifecycle API](https://developer.chrome.com/docs/web-platform/page-lifecycle-api)

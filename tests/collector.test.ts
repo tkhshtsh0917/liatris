@@ -283,10 +283,41 @@ test("sends a UTF-8 record at the exact limit without assigning a session to ove
 	await collector.setConsent(true);
 	await assert.rejects(
 		collector.trackEvent("saved", {
-			metadata: { ...metadata, padding: metadata.padding + "x" },
+			metadata: { ...metadata, padding: `${metadata.padding}x` },
 		}),
 		/record too large/,
 	);
 	assert.equal(opened(), 0);
 	assert.equal(await collector.trackEvent("saved", { metadata }), "sent");
+});
+
+test("binds checkpoints to the originating session without extending it", async (t) => {
+	let now = Date.parse("2026-11-22T00:00:00.000Z");
+	t.mock.method(Date, "now", () => now);
+	const sent: Envelope[] = [];
+	const { collector } = fixture(async (record) => {
+		sent.push(record);
+	});
+	await collector.setConsent(true);
+
+	const clickDelivery = collector.trackEvent("click", click);
+	const original = collector.bindObservation();
+	assert.ok(original);
+	await clickDelivery;
+
+	now += 29 * 60_000;
+	assert.equal(await original.sessionElapsedMs(), 29 * 60_000);
+	assert.equal(await original.trackEvent("add_cart"), "sent");
+
+	now += 60_000;
+	await collector.trackEvent("click", click);
+	assert.equal(await original.trackEvent("add_cart"), "sent");
+	assert.equal(sent[0].payload.session_id, sent[1].payload.session_id);
+	assert.notEqual(sent[0].payload.session_id, sent[2].payload.session_id);
+	assert.equal(sent[0].payload.session_id, sent[3].payload.session_id);
+
+	await collector.setConsent(false);
+	await collector.setConsent(true);
+	assert.equal(await original.trackEvent("add_cart"), "no-consent");
+	assert.equal(await original.sessionElapsedMs(), undefined);
 });

@@ -15,7 +15,7 @@ Recent click-log studies motivate recording the displayed list and exposure inde
 
 A queued browser Beacon and a durable receiver acknowledgement have different meanings. M3 treats receipt confirmation and consent as properties to test under failures. M5 follows the standardization work on privacy-preserving aggregation as a separate experiment. [W3C Beacon](https://www.w3.org/TR/beacon/) · [IETF DAP draft](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/)
 
-M2 includes opt-in duration metrics with explicit inactivity and missing-observation tests. [Metric definitions](event-contracts.md#proposed-duration-and-search-metrics)
+M2 includes opt-in duration metrics and tests for inactivity and missing observations. The demo implements result dwell and session elapsed time at dwell checkpoints. [Metric definitions](event-contracts.md#duration-and-search-metrics)
 
 ## Security and privacy release conditions
 

@@ -40,6 +40,7 @@ for (const name of [
 	"bearer",
 	"collector",
 	"endpoint",
+	"engagement",
 	"fields",
 	"impressions",
 	"http-delivery",

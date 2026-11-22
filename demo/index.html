@@ -8,7 +8,7 @@
   <body>
     <main>
       <h1>Liatris collector demo</h1>
-      <p>Search the sample catalog and click a result. The terminal shows accepted searches, visible results and clicks.</p>
+      <p>Search the sample catalog and click a result. The terminal shows accepted searches, visible results, clicks, and measured dwell.</p>
       <label><input type="checkbox" id="consent" autocomplete="off"> Allow collection in this tab</label>
       <form id="search">
         <label for="term">Sample query</label>
@@ -20,6 +20,11 @@
       </form>
       <p id="summary" role="status"></p>
       <ul id="results"></ul>
+      <section id="detail" aria-labelledby="detail-title" hidden>
+        <h2 id="detail-title">Product details</h2>
+        <p>Sample product details.</p>
+        <button type="button" id="close-detail">Close detail</button>
+      </section>
       <p id="status" role="status">Collection disabled.</p>
     </main>
     <script type="module" src="/assets/demo/browser.js"></script>
