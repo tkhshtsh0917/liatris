@@ -11,13 +11,15 @@ console.log(
 		cores: cpus().length,
 	}),
 );
-if (mode === "server")
-	await (await import("./receiver.ts")).benchmarkReceiver();
+if (mode === "server" || mode === "server-batch")
+	await (await import("./receiver.ts")).benchmarkReceiver(
+		mode === "server-batch",
+	);
 else if (mode === "browser")
 	await (await import("./browser.ts")).benchmarkBrowser();
 else if (mode === "forwarder")
 	await (await import("./forwarder.ts")).benchmarkForwarder();
 else
 	throw new Error(
-		"usage: node benchmarks/delivery.ts server|browser|forwarder",
+		"usage: node benchmarks/delivery.ts server|server-batch|browser|forwarder",
 	);

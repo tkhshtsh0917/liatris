@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 import { chromium, firefox, webkit } from "playwright";
+import type { Envelope } from "../src/records.ts";
 import { compiled, percentile } from "./fixtures.ts";
 
 export async function benchmarkBrowser() {
@@ -29,6 +30,8 @@ export async function benchmarkBrowser() {
 					viewport: { width: 1280, height: 720 },
 				});
 				try {
+					let posts = 0;
+					let maxBatch = 0;
 					await page.route(`${origin}/**`, async (route) => {
 						const path = new URL(route.request().url()).pathname;
 						if (path === "/")
@@ -42,8 +45,17 @@ export async function benchmarkBrowser() {
 								body: wasm,
 							});
 						if (path === "/api/ubi") {
+							const records = route.request().postDataJSON() as Envelope[];
+							posts++;
+							maxBatch = Math.max(maxBatch, records.length);
 							if (scenario.delayMs) await sleep(scenario.delayMs);
-							return route.fulfill({ status: 204 });
+							return route.fulfill({
+								status: 200,
+								json: records.map(({ event_id }) => ({
+									event_id,
+									status: "accepted",
+								})),
+							});
 						}
 						if (/^\/[a-z-]+\.js$/.test(path)) {
 							return route.fulfill({
@@ -68,21 +80,30 @@ export async function benchmarkBrowser() {
 										typeof import("../src/impressions.ts")
 									>,
 								]);
-							const http = collectorModule.createHttpDelivery(
+							const http = collectorModule.createHttpBatchDelivery(
 								profile.endpoint,
-								{ requireAcknowledgement: true },
 							);
 							const receipts: { time: number; click: boolean }[] = [];
 							const starting = performance.now();
 							const queue = queueModule.createQueuedDelivery({
 								profile,
 								profileHash: sha256,
-								async send(event, signal) {
-									await http(event, signal);
-									receipts.push({
-										time: performance.now() - starting,
-										click: event.payload.action_name === "click",
-									});
+								async sendBatch(events, signal) {
+									const result = await http(events, signal);
+									const accepted = new Set(
+										result
+											.filter(({ status }) => status === "accepted")
+											.map(({ event_id }) => event_id),
+									);
+									const time = performance.now() - starting;
+									for (const event of events) {
+										if (accepted.has(event.event_id))
+											receipts.push({
+												time,
+												click: event.payload.action_name === "click",
+											});
+									}
+									return result;
 								},
 							});
 							const collector = collectorModule.createCollector({
@@ -155,6 +176,7 @@ export async function benchmarkBrowser() {
 								throw new Error("impression benchmark did not finish");
 							observer.close();
 
+							const clickAt = performance.now() - starting;
 							let clickQueued = true;
 							try {
 								await collector.trackEvent("click", {
@@ -181,7 +203,9 @@ export async function benchmarkBrowser() {
 							if (receipts.length !== total)
 								throw new Error("queue did not finish draining");
 							await queue.close();
+							const click = receipts.find((receipt) => receipt.click);
 							return {
+								clickAckMs: click ? click.time - clickAt : null,
 								accepted: latencies.length,
 								dropped,
 								clickQueued,
@@ -193,8 +217,14 @@ export async function benchmarkBrowser() {
 						},
 						{ ...scenario, profile, sha256 },
 					);
-					const { accepted, dropped, clickQueued, latencies, receipts } =
-						measurement;
+					const {
+						accepted,
+						dropped,
+						clickQueued,
+						clickAckMs,
+						latencies,
+						receipts,
+					} = measurement;
 					console.log(
 						JSON.stringify({
 							stage: "browser",
@@ -204,6 +234,9 @@ export async function benchmarkBrowser() {
 							accepted,
 							dropped,
 							clickQueued,
+							clickAckMs,
+							posts,
+							maxBatch,
 							enqueueP50: percentile(latencies, 0.5),
 							enqueueP95: percentile(latencies, 0.95),
 							ackP95: percentile(receipts, 0.95),
