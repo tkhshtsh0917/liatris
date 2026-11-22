@@ -215,3 +215,38 @@ test("failed revocation keeps collection disabled until cleanup can be retried",
 	await collector.setConsent(true);
 	assert.equal(await collector.trackEvent("click", click), "sent");
 });
+
+test("requires cleanup after the latest of two queued revocations fails", async () => {
+	let cleared = 0;
+	const collector = createCollector({
+		profile,
+		profileHash: sha256,
+		async openStore() {
+			return {
+				async update() {
+					if (++cleared === 2) throw new Error("cleanup failed");
+					return null;
+				},
+			};
+		},
+		async loadWasm() {
+			assert.fail("unexpected WASM initialization");
+		},
+		async deliver() {
+			assert.fail("unexpected delivery");
+		},
+	});
+
+	const first = collector.setConsent(false);
+	const second = assert.rejects(collector.setConsent(false), /cleanup failed/);
+	const grant = assert.rejects(
+		collector.setConsent(true),
+		/cleanup must complete/,
+	);
+	await Promise.all([first, second, grant]);
+	assert.equal(await collector.trackQuery(query), "no-consent");
+
+	await collector.setConsent(false);
+	await collector.setConsent(true);
+	assert.equal(cleared, 3);
+});

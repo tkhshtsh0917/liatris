@@ -67,6 +67,7 @@ export function createCollector({
 		consent = undefined;
 		cleanupRequired = true;
 		await withinSession(async () => {
+			cleanupRequired = true;
 			store ??= await openStore();
 			await clearSession(store, profile);
 			session = undefined;
