@@ -24,6 +24,7 @@ export function observeResultImpressions(
 	const pending = new Map<Element, Registration>();
 	const reported = new Set<number>();
 	let observer: IntersectionObserver | undefined;
+	let resizeObserver: ResizeObserver | undefined;
 	let closed = false;
 
 	function notify(
@@ -43,11 +44,18 @@ export function observeResultImpressions(
 				source !== observer ||
 				!card ||
 				card !== pending.get(target) ||
-				!target.isConnected ||
+				!target.isConnected
+			)
+				continue;
+
+			if (bounds.width <= 0 || bounds.height <= 0) {
+				resizeObserver?.observe(target, { box: "border-box" });
+				continue;
+			}
+			resizeObserver?.unobserve(target);
+			if (
 				!entry.isIntersecting ||
-				Math.fround(entry.intersectionRatio) < comparableThreshold ||
-				bounds.width <= 0 ||
-				bounds.height <= 0
+				Math.fround(entry.intersectionRatio) < comparableThreshold
 			)
 				continue;
 
@@ -62,6 +70,7 @@ export function observeResultImpressions(
 
 	function unregister(target: Element) {
 		pending.delete(target);
+		resizeObserver?.unobserve(target);
 		const source = observer;
 		if (!source) return;
 
@@ -75,14 +84,38 @@ export function observeResultImpressions(
 
 	function syncVisibility() {
 		observer?.disconnect();
+		resizeObserver?.disconnect();
 		observer = undefined;
+		resizeObserver = undefined;
 		if (
 			document.visibilityState !== "visible" ||
 			typeof IntersectionObserver === "undefined"
 		)
 			return;
 
-		observer = new IntersectionObserver(notify, { threshold });
+		const source = new IntersectionObserver(notify, { threshold });
+		observer = source;
+		if (typeof ResizeObserver !== "undefined") {
+			resizeObserver = new ResizeObserver((entries, resize) => {
+				if (observer !== source) return;
+				for (const { target } of entries) {
+					const card = pending.get(target);
+					if (!card || !target.isConnected) continue;
+					const { width, height } = target.getBoundingClientRect();
+					if (width <= 0 || height <= 0) continue;
+
+					// A zero area target can already have an intersection ratio of 1.
+					resize.unobserve(target);
+					source.unobserve(target);
+					notify(
+						source.takeRecords().filter((entry) => entry.target !== target),
+						source,
+					);
+					if (observer === source && pending.get(target) === card)
+						source.observe(target);
+				}
+			});
+		}
 		for (const target of pending.keys()) observer.observe(target);
 	}
 
@@ -113,7 +146,9 @@ export function observeResultImpressions(
 			closed = true;
 			document.removeEventListener("visibilitychange", syncVisibility);
 			observer?.disconnect();
+			resizeObserver?.disconnect();
 			observer = undefined;
+			resizeObserver = undefined;
 			pending.clear();
 			reported.clear();
 		},

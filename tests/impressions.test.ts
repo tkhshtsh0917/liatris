@@ -5,6 +5,7 @@ import { observeResultImpressions } from "../src/impressions.ts";
 class ObserverStub {
 	static current: ObserverStub;
 	queue: IntersectionObserverEntry[] = [];
+	observations = 0;
 
 	private notify: IntersectionObserverCallback;
 
@@ -13,7 +14,9 @@ class ObserverStub {
 		ObserverStub.current = this;
 	}
 
-	observe() {}
+	observe() {
+		this.observations++;
+	}
 	unobserve() {}
 	disconnect() {}
 
@@ -85,4 +88,53 @@ test("ignores background and recycled observations and accepts the exact thresho
 	observer.close();
 	resumed.emit(observation(card, 1));
 	assert.deepEqual(ordinals, [2]);
+});
+
+test("takes a fresh intersection reading when a zero-area card grows", (t) => {
+	let reportResize: ResizeObserverCallback | undefined;
+	class ResizeStub {
+		constructor(callback: ResizeObserverCallback) {
+			reportResize = callback;
+		}
+		observe() {}
+		unobserve() {}
+		disconnect() {}
+	}
+	for (const [name, value] of Object.entries({
+		document: Object.assign(new EventTarget(), { visibilityState: "visible" }),
+		IntersectionObserver: ObserverStub,
+		ResizeObserver: ResizeStub,
+	})) {
+		const original = Object.getOwnPropertyDescriptor(globalThis, name);
+		Object.defineProperty(globalThis, name, { value, configurable: true });
+		t.after(() => {
+			if (original) Object.defineProperty(globalThis, name, original);
+			else Reflect.deleteProperty(globalThis, name);
+		});
+	}
+
+	const reported: number[] = [];
+	const tracker = observeResultImpressions({}, (rank) => {
+		reported.push(rank);
+	});
+	const card = {
+		isConnected: true,
+		getBoundingClientRect: () => ({ width: 120, height: 80 }),
+	} as Element;
+	tracker.observe(card, 1);
+	const intersection = ObserverStub.current;
+	intersection.emit({
+		...observation(card, 1),
+		boundingClientRect: { width: 0, height: 0 } as DOMRectReadOnly,
+	});
+	assert.deepEqual(reported, []);
+	assert.ok(reportResize);
+	reportResize(
+		[{ target: card } as ResizeObserverEntry],
+		new ResizeStub(reportResize),
+	);
+	assert.equal(intersection.observations, 2);
+	intersection.emit(observation(card, 1));
+	assert.deepEqual(reported, [1]);
+	tracker.close();
 });
