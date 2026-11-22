@@ -34,7 +34,7 @@ The defaults are 50% visible card area and 30 minutes of session inactivity. Omi
 
 - [Collection profile](examples/shop.toml) declares allowed fields and opts in to query text for the synthetic demo. [YAML example](examples/shop.yaml).
 - [Browser integration](demo/browser.ts) shows consent, search and click capture, and the HTTP/JSON transport.
-- [Durable delivery](docs/delivery.md) covers local storage, retries and Kinesis verification.
+- [Durable delivery](docs/delivery.md) covers local storage, retries, the streaming destination contract, and a reference adapter.
 - [Security and privacy](docs/security.md) covers cookies, consent, authentication and deployment controls.
 - [Roadmap](docs/roadmap.md) tracks implementation and verification milestones.
 - [Design](docs/design.md) explains UBI schema modes, session policy and transport integration.
@@ -42,4 +42,4 @@ The defaults are 50% visible card area and 30 minutes of session inactivity. Omi
 
 To compile a profile separately, run `mkdir -p dist && npm run profile -- examples/shop.toml dist/shop.profile.json`. The compiler writes normalized JSON and prints its SHA-256.
 
-The demo uses an IndexedDB queue, a SQLite reference receiver and an optional Kinesis worker. Tag distribution and gRPC are listed in the roadmap.
+The demo uses an IndexedDB queue and a SQLite reference receiver. Server-side adapters forward accepted events to the deployment’s streaming destination. The repository includes an Amazon Kinesis Data Streams adapter as a working example. Tag distribution and gRPC are listed in the roadmap.

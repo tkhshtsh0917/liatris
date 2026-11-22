@@ -34,7 +34,7 @@ inactivityMinutes = 15
 
 - [収集プロファイル](examples/shop.toml) は許可する項目を宣言し、サンプルデモの検索語収集を明示的に有効にします。[YAML の例](examples/shop.yaml)。
 - [ブラウザでの組み込み例](demo/browser.ts) では、同意、検索とクリックの収集、HTTP/JSON 配送を確認できます。
-- [永続配送](docs/ja/delivery.md) では、ローカルへの保存、再送、Kinesis の検証を説明します。
+- [永続配送](docs/ja/delivery.md) では、ローカルへの保存、再送、ストリーミング先への転送契約とアダプターの例を説明します。
 - [セキュリティとプライバシー](docs/ja/security.md) では、Cookie、同意、認証、公開時の制御を説明します。
 - [ロードマップ](docs/ja/roadmap.md) は実装と検証のマイルストーンを示します。
 - [設計](docs/ja/design.md) では、UBI のスキーマモード、セッションポリシー、配送方式を説明します。
@@ -42,4 +42,4 @@ inactivityMinutes = 15
 
 収集プロファイルだけをコンパイルするには `mkdir -p dist && npm run profile -- examples/shop.toml dist/shop.profile.json` を実行します。コンパイラは正規化済み JSON を書き込み、SHA-256 を表示します。
 
-デモは IndexedDB キューと SQLite のリファレンス受信実装を使い、必要に応じて Kinesis ワーカーを利用できます。タグ配布と gRPC はロードマップに記載しています。
+デモは IndexedDB キューと SQLite のリファレンス受信実装を使います。受領済みのイベントは、サーバー側のアダプターで導入先のストリーミング基盤へ転送できます。動作する接続例として Amazon Kinesis Data Streams 用のアダプターを同梱しています。タグ配布と gRPC はロードマップに記載しています。

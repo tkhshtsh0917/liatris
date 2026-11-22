@@ -12,7 +12,13 @@ Tabs share a consent generation, session and queue in IndexedDB. A withdrawal de
 
 The reference intake commits accepted events to SQLite before returning 204. Reposting the same envelope returns 204 and leaves one stored event. A different envelope with the same ID and tenant/application returns 409. Set `LIATRIS_DB` to choose the database path. By default the demo uses `liatris-demo.sqlite`. Establish retention and deletion policies and protect the database file before storing production data.
 
-## Kinesis forwarding and verification
+## Streaming destination contract
+
+Choose a low-latency streaming service for the deployment and connect it through a server-side adapter. Read committed events from the outbox, preserve the UBI envelope and `event_id`, and mark each event as forwarded only after the destination confirms acceptance. Keep unacknowledged records available for retry, including records that fail individually in a batch. Apply the destination's limits and error handling in the adapter. The browser and intake API use the same acknowledgement contract for every destination.
+
+A process can stop after the destination accepts a record and before the outbox records that acceptance. Consumers can use `event_id` to deduplicate deliveries in their collection scope.
+
+## Reference adapter for Amazon Kinesis Data Streams
 
 Run one forwarding worker per SQLite outbox and stream. Provide `LIATRIS_KINESIS_STREAM`, `AWS_REGION` and a server-side AWS credential provider. The worker uses `LIATRIS_DB` and accepts `LIATRIS_PROFILE` as the path to a TOML profile for selecting the tenant and application. It uses HTTP/1.1 when a plain HTTP Kinesis endpoint override is configured for local tests.
 
@@ -21,6 +27,6 @@ npm run forward:kinesis
 npm run test:kinesis
 ```
 
-The Compose test submits through the reference HTTP receiver, repeats delivery for one event ID, and checks the envelope after reading it back from Moto. The unit test verifies partial batch responses. A crash after Kinesis accepts a record but before SQLite marks it forwarded can lead to another delivery. Consumers should deduplicate by `event_id`. Validate production IAM policy and limits against AWS.
+The Compose test submits through the reference HTTP receiver, repeats delivery for one event ID, and checks the envelope after reading it back from Moto. The unit test verifies partial batch responses. Scope the AWS role to writing the selected stream, and validate the production IAM policy and service limits against AWS. [Kinesis IAM documentation](https://docs.aws.amazon.com/streams/latest/dev/controlling-access.html)
 
 For browser delivery tests, build the WASM with `mise run wasm`, install Chromium, Firefox and WebKit with `npx playwright install chromium firefox webkit`, and run `npm run test:browser`. The suite checks lost acknowledgements, storage across reloads and revocation from another tab.

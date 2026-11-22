@@ -16,7 +16,7 @@ Prefer a first-party collection endpoint. For authenticated delivery the host pr
 
 The receiver checks audience, expiration, `liatris:write`, tenant and application before reading and validating the bounded body. It uses its server-side profile mapping for routing and the profile hash for compatibility. CORS and Origin checks limit browser access. Keep them separate from token authentication. An anonymous token issuance endpoint also needs quotas and abuse controls. Keep sensitive conversions such as completed purchases backed by trusted server events. [OWASP API Security Top 10](https://api-security.owasp.org/editions/2023/en/0x11-t10/)
 
-For an external endpoint, allow only the exact approved origins in CORS and `connect-src`. Where needed, permit the `Authorization` and `Content-Type` headers in the preflight response. Keep long-lived secrets, signing keys, and downstream credentials on the server. Give the Kinesis bridge an IAM role scoped to writing to the intended stream. Authenticate native gRPC forwarding with the service's workload identity. [Content Security Policy](https://www.w3.org/TR/CSP3/) · [Kinesis IAM documentation](https://docs.aws.amazon.com/streams/latest/dev/controlling-access.html)
+For an external endpoint, allow only the exact approved origins in CORS and `connect-src`. Where needed, permit the `Authorization` and `Content-Type` headers in the preflight response. Keep long-lived secrets, signing keys, and downstream credentials on the server. Restrict the forwarding identity to writing to the selected destination. Authenticate native gRPC forwarding with the service’s workload identity. [Content Security Policy](https://www.w3.org/TR/CSP3/)
 
 ## Production readiness
 

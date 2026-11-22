@@ -16,7 +16,7 @@ HTTP 送信には `credentials: "omit"` と `referrerPolicy: "no-referrer"` を�
 
 受信側は上限付きの本文を読み込み検証する前に、対象サービス、有効期限、`liatris:write`、テナント、アプリケーションを確認します。配送先の決定にはサーバー側のプロファイル、互換性の確認にはプロファイルのハッシュを使います。CORS と Origin チェックはブラウザからの接続を制限する仕組みで、トークン認証とは別に適用します。匿名でもトークンを発行できる場合は、発行口にも割り当て上限と悪用対策が必要です。購入完了などの機微なコンバージョンは、信頼できるサーバーイベントで裏付けます。[OWASP API Security Top 10](https://api-security.owasp.org/editions/2023/en/0x11-t10/)
 
-外部エンドポイントを使う場合、CORS と `connect-src` には承認したオリジンだけを明示します。必要に応じてプリフライト応答で `Authorization` と `Content-Type` を許可します。長期の認証情報、署名鍵、下流の認証情報はサーバーに置きます。Kinesis への中継には対象ストリームへの書き込みに限定した IAM ロールを使い、ネイティブ gRPC への転送はサービスのワークロード ID で認証します。[Content Security Policy](https://www.w3.org/TR/CSP3/) · [Kinesis の IAM 文書](https://docs.aws.amazon.com/streams/latest/dev/controlling-access.html)
+外部エンドポイントを使う場合、CORS と `connect-src` には承認したオリジンだけを明示します。必要に応じてプリフライト応答で `Authorization` と `Content-Type` を許可します。長期の認証情報、署名鍵、下流の認証情報はサーバーに置きます。転送に使う認証情報は、選んだ配送先への書き込みに限定します。ネイティブ gRPC への転送はサービスのワークロード ID で認証します。[Content Security Policy](https://www.w3.org/TR/CSP3/)
 
 ## 本番公開の条件
 
