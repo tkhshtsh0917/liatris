@@ -26,3 +26,6 @@ rustc-ice-*.txt
 # JavaScript dependencies and generated output
 /node_modules/
 /dist/
+
+# Local demo data
+/liatris-demo.sqlite*

@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { openEventStore } from "../server/event-store.ts";
 import { createHttpReceiver } from "../server/http.ts";
 import { compileProfile } from "../tools/profile.ts";
 
@@ -14,10 +15,16 @@ const { profile, sha256 } = compileProfile(
 	"toml",
 );
 
+const store = openEventStore(
+	process.env.LIATRIS_DB ?? "liatris-demo.sqlite",
+	profile,
+);
 const receive = createHttpReceiver(
 	profile,
 	sha256,
 	async (record) => {
+		await store.accept(record);
+
 		console.log("accepted", record.kind, record.payload.action_name ?? "query");
 	},
 	{ loopbackOrigin: origin },
@@ -108,3 +115,4 @@ const server = createServer(
 	},
 );
 server.listen(port, "127.0.0.1", () => console.log(origin));
+server.on("close", () => store.close());

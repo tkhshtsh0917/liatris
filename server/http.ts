@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Profile } from "../src/profile.ts";
 import { type Envelope, maxRecordBytes } from "../src/records.ts";
 import { createIntakeAccess, type IntakeAccess } from "./access.ts";
+import { EventConflictError } from "./intake-error.ts";
 import { validateRecord } from "./validate.ts";
 
 type HttpReceiverOptions = IntakeAccess & { bodyTimeoutMs?: number };
@@ -102,8 +103,8 @@ export function createHttpReceiver(
 
 		try {
 			await accept(record);
-		} catch {
-			return reply(response, 503);
+		} catch (error) {
+			return reply(response, error instanceof EventConflictError ? 409 : 503);
 		}
 		reply(response, 204);
 	};
