@@ -11,7 +11,10 @@ import {
 import { clearSession, createSessionManager } from "./session.ts";
 import type { SessionStore } from "./session-store.ts";
 
-export { createHttpDelivery } from "./http-delivery.ts";
+export {
+	createHttpBatchDelivery,
+	createHttpDelivery,
+} from "./http-delivery.ts";
 
 export type Delivery = (record: Envelope, signal: AbortSignal) => Promise<void>;
 type Status = "sent" | "queued" | "no-consent" | "query-text-disabled";
