@@ -34,6 +34,7 @@ The defaults are 50% visible card area and 30 minutes of session inactivity. Omi
 
 - [Collection profile](examples/shop.toml) declares allowed fields and opts in to query text for the synthetic demo. [YAML example](examples/shop.yaml).
 - [Browser integration](demo/browser.ts) shows consent, search and click capture, and the HTTP/JSON transport.
+- [Roadmap](docs/roadmap.md) tracks implementation and verification milestones.
 - [Design](docs/design.md) explains UBI schema modes, session policy, and planned delivery adapters.
 - [Event contracts](docs/event-contracts.md) shows how to define events for commerce and jobs.
 

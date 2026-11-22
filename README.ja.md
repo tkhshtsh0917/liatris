@@ -34,6 +34,7 @@ inactivityMinutes = 15
 
 - [収集プロファイル](examples/shop.toml) は許可する項目を宣言し、サンプルデモの検索語収集を明示的に有効にします。[YAML の例](examples/shop.yaml)。
 - [ブラウザでの組み込み例](demo/browser.ts) では、同意、検索とクリックの収集、HTTP/JSON 配送を確認できます。
+- [ロードマップ](docs/ja/roadmap.md) は実装と検証のマイルストーンを示します。
 - [設計](docs/ja/design.md) では、UBI のスキーマモード、セッションポリシー、計画中の配送アダプターを説明します。
 - [イベント契約](docs/ja/event-contracts.md) では、EC・求人サイトのイベント定義例を示します。
 

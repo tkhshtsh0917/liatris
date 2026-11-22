@@ -1,6 +1,6 @@
 # Liatris の設計
 
-[English](../design.md)
+[English](../design.md) · [ロードマップ](roadmap.md)
 
 ## 収集とイベント契約
 

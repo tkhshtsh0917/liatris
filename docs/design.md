@@ -1,6 +1,6 @@
 # Liatris design
 
-[日本語](ja/design.md)
+[日本語](ja/design.md) · [Roadmap](roadmap.md)
 
 ## Collection and event contracts
 
