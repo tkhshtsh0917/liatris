@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { compileProfile } from "../tools/profile.ts";
 
 const yaml = await readFile(
@@ -104,4 +108,31 @@ test("normalizes visibility and accepts custom visibility and session settings a
 	for (const inactivityMinutes of [0, 1441, 30.5, "30"]) {
 		assert.throws(() => compile({ session: { inactivityMinutes } }));
 	}
+});
+
+test("the CLI reads at most the profile limit plus one byte", async (t) => {
+	const directory = await mkdtemp(join(tmpdir(), "liatris-profile-"));
+	t.after(() => rm(directory, { recursive: true }));
+	const input = join(directory, "source.json");
+	const output = join(directory, "compiled.json");
+	const cli = fileURLToPath(
+		new URL("../tools/compile-profile.ts", import.meta.url),
+	);
+	const run = () =>
+		spawnSync(process.execPath, [cli, input, output], { encoding: "utf8" });
+
+	const exact = compileProfile(yaml, "yaml").json.padEnd(64 * 1024);
+	await writeFile(input, `${exact} `);
+	const rejected = run();
+	assert.equal(rejected.status, 1);
+	assert.match(rejected.stderr, /profile too large/);
+	await assert.rejects(readFile(output), { code: "ENOENT" });
+
+	await writeFile(input, exact);
+	const accepted = run();
+	assert.equal(accepted.status, 0, accepted.stderr);
+	assert.equal(
+		await readFile(output, "utf8"),
+		compileProfile(yaml, "yaml").json,
+	);
 });

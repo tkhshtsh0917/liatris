@@ -52,9 +52,11 @@ function checkPlainValues(value: unknown): void {
 	for (const child of Object.values(value)) checkPlainValues(child);
 }
 
+export const maxProfileBytes = 64 * 1024;
+
 /** Compiles a bounded JSON, YAML, or TOML profile into reproducible JSON. */
 export function compileProfile(source: string, format: keyof typeof parsers) {
-	if (Buffer.byteLength(source) > 64 * 1024)
+	if (Buffer.byteLength(source) > maxProfileBytes)
 		throw new Error("profile too large");
 
 	const input = parsers[format](source);
