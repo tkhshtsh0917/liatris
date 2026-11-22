@@ -1,4 +1,4 @@
-import { createCollector, createHttpDelivery } from "../src/collector.ts";
+import { createCollector, createHttpBatchDelivery } from "../src/collector.ts";
 import { observeEngagement } from "../src/engagement.ts";
 import { observeResultImpressions } from "../src/impressions.ts";
 import type { Profile } from "../src/profile.ts";
@@ -33,9 +33,7 @@ const collector = createCollector({
 	queue: createQueuedDelivery({
 		profile,
 		profileHash: sha256,
-		send: createHttpDelivery(profile.endpoint, {
-			requireAcknowledgement: true,
-		}),
+		sendBatch: createHttpBatchDelivery(profile.endpoint),
 	}),
 	async loadWasm() {
 		const response = await fetch("/session.wasm", { credentials: "omit" });

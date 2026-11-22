@@ -1,24 +1,36 @@
+import {
+	type BatchDelivery,
+	maxBatchBytes,
+	maxBatchEvents,
+	type ReceiptStatus,
+	readBatchReceipts,
+} from "./batch.ts";
 import type { Delivery } from "./collector.ts";
 import { HttpDeliveryError } from "./http-delivery.ts";
 import {
 	type ConsentState,
+	deliveryPriority,
 	openOutbox,
 	type QueuedEvent,
 	updateOutbox,
 } from "./outbox-storage.ts";
 import type { Profile } from "./profile.ts";
-import type { Envelope } from "./records.ts";
+import { type Envelope, maxRecordBytes } from "./records.ts";
 import type { SessionStore } from "./session-store.ts";
 
 type DropReason = "expired" | "capacity" | "rejected";
 type Options = {
 	profile: Pick<Profile, "tenant" | "application">;
 	profileHash: string;
-	send: Delivery;
 	onDrop?: (reason: DropReason) => void;
-};
+} & (
+	| { send: Delivery; sendBatch?: never }
+	| { sendBatch: BatchDelivery; send?: never }
+);
 
-const capacity = 64;
+const capacity = 512;
+const protectedCapacity = 64;
+const coalesceMs = 8;
 const retentionMs = 24 * 60 * 60_000;
 const requestTimeoutMs = 15_000;
 
@@ -27,12 +39,14 @@ export function createQueuedDelivery({
 	profile,
 	profileHash,
 	send,
+	sendBatch,
 	onDrop,
 }: Options) {
 	const scope = JSON.stringify([profile.tenant, profile.application]);
 	let database: Promise<IDBDatabase> | undefined;
 	let channel: BroadcastChannel | undefined;
 	let active: { generation: string; controller: AbortController } | undefined;
+	let coalesce: ReturnType<typeof setTimeout> | undefined;
 	let retry: ReturnType<typeof setTimeout> | undefined;
 	let drain: Promise<void> | undefined;
 	let wakeRequested = false;
@@ -49,6 +63,8 @@ export function createQueuedDelivery({
 		active?.controller.abort();
 		active = undefined;
 		clearTimeout(retry);
+		clearTimeout(coalesce);
+		coalesce = undefined;
 		window.removeEventListener("online", wake);
 		document.removeEventListener("visibilitychange", wake);
 	}
@@ -66,7 +82,29 @@ export function createQueuedDelivery({
 		retry = setTimeout(wake, Math.max(0, at - Date.now()));
 	}
 
-	async function expire() {
+	function sizedBatch(entries: QueuedEvent[]) {
+		const encoder = new TextEncoder();
+		let bytes = 2;
+		let count = 0;
+		for (const entry of entries) {
+			const size =
+				encoder.encode(JSON.stringify(entry.record)).length + Number(count > 0);
+			if (bytes + size > maxBatchBytes) break;
+			bytes += size;
+			count++;
+		}
+		return entries.slice(0, count);
+	}
+
+	async function dispatch(records: Envelope[], signal: AbortSignal) {
+		if (sendBatch)
+			return readBatchReceipts(await sendBatch(records, signal), records);
+		if (!send) throw new TypeError("delivery is required");
+		await send(records[0], signal);
+		return [{ event_id: records[0].event_id, status: "accepted" as const }];
+	}
+
+	async function drainReady() {
 		const lease = active;
 		if (!lease) return;
 
@@ -76,18 +114,16 @@ export function createQueuedDelivery({
 			async (state, outbox) => {
 				if (!state || state.generation !== lease.generation) return;
 				const now = Date.now();
-				const pending: QueuedEvent[] = [];
-				let expired = 0;
-				for (const entry of await outbox.list()) {
-					if (entry.expiresAt <= now) {
-						outbox.remove(entry.record.event_id);
-						expired++;
-					} else if (entry.record.profile_hash === profileHash) {
-						pending.push(entry);
-					}
-				}
-				pending.sort((a, b) => a.nextAttempt - b.nextAttempt);
-				return { entry: pending[0], expired };
+				const expired = await outbox.expire(now);
+				const ready = await outbox.ready(
+					profileHash,
+					now,
+					sendBatch ? maxBatchEvents : 1,
+				);
+				const nextAttempt = ready.length
+					? Infinity
+					: await outbox.nextAttempt(profileHash, now);
+				return { ready, expired, nextAttempt };
 			},
 		);
 		if (active !== lease) return;
@@ -97,62 +133,68 @@ export function createQueuedDelivery({
 		}
 
 		for (let i = 0; i < next.expired; i++) notify("expired");
-		const { entry } = next;
-		if (!entry) return;
-		if (entry.nextAttempt > Date.now()) {
-			schedule(Math.min(entry.nextAttempt, entry.expiresAt));
+		if (!next.ready.length) {
+			if (Number.isFinite(next.nextAttempt)) schedule(next.nextAttempt);
 			return;
 		}
-
-		let failure: unknown;
-		let delivered = false;
+		const entries = sendBatch ? sizedBatch(next.ready) : next.ready;
+		const receipts = new Map<string, ReceiptStatus>();
+		let retryAfter = 0;
+		let fallback: ReceiptStatus = "retry";
 		try {
-			await send(
-				entry.record,
+			const acknowledged = await dispatch(
+				entries.map(({ record }) => record),
 				AbortSignal.any([
 					lease.controller.signal,
 					AbortSignal.timeout(requestTimeoutMs),
 				]),
 			);
-			delivered = true;
+			for (const receipt of acknowledged)
+				receipts.set(receipt.event_id, receipt.status);
 		} catch (error) {
-			failure = error;
+			if (error instanceof HttpDeliveryError) {
+				retryAfter = error.retryAfterMs;
+				if (!error.retryable) fallback = "rejected";
+			}
 		}
 		if (lease.controller.signal.aborted) return;
-		const permanent =
-			failure instanceof HttpDeliveryError && !failure.retryable;
-		const updated = await updateOutbox(
+
+		const rejected = await updateOutbox(
 			await open(),
 			scope,
 			async (state, outbox) => {
-				if (!state || state.generation !== lease.generation) return false;
-				const current = (await outbox.list()).find(
-					(item) => item.record.event_id === entry.record.event_id,
-				);
-				if (!current) return true;
+				if (!state || state.generation !== lease.generation) return;
+				let count = 0;
+				for (const entry of entries) {
+					const id = entry.record.event_id;
+					const status = receipts.get(id) ?? fallback;
+					if (status !== "retry") {
+						if (status === "rejected" && (await outbox.has(id))) count++;
+						outbox.remove(id);
+						continue;
+					}
 
-				if (delivered || permanent) outbox.remove(entry.record.event_id);
-				else if (current.attempts === entry.attempts) {
-					const delay = Math.min(
-						300_000,
-						1000 * 2 ** Math.min(entry.attempts, 9),
-					);
-					const retryAfter =
-						failure instanceof HttpDeliveryError ? failure.retryAfterMs : 0;
-					outbox.put({
-						...entry,
-						attempts: entry.attempts + 1,
-						nextAttempt:
-							Date.now() +
-							Math.max(retryAfter, delay * (0.5 + Math.random() * 0.5)),
-					});
+					const current = await outbox.get(id);
+					if (current?.attempts === entry.attempts) {
+						const delay = Math.min(
+							300_000,
+							1000 * 2 ** Math.min(entry.attempts, 9),
+						);
+						outbox.put({
+							...current,
+							attempts: entry.attempts + 1,
+							nextAttempt:
+								Date.now() +
+								Math.max(retryAfter, delay * (0.5 + Math.random() * 0.5)),
+						});
+					}
 				}
-				return true;
+				return count;
 			},
 		);
-		if (updated && permanent) notify("rejected");
+		for (let i = 0; i < (rejected ?? 0); i++) notify("rejected");
 		if (active === lease) {
-			if (updated) wakeRequested = true;
+			if (rejected !== undefined) wakeRequested = true;
 			else stop();
 		}
 	}
@@ -160,11 +202,13 @@ export function createQueuedDelivery({
 	function wake() {
 		if (!active) return;
 		clearTimeout(retry);
+		clearTimeout(coalesce);
+		coalesce = undefined;
 		if (drain) {
 			wakeRequested = true;
 			return;
 		}
-		drain = expire()
+		drain = drainReady()
 			.catch(() => {
 				if (active) schedule(Date.now() + 5000);
 			})
@@ -233,8 +277,7 @@ export function createQueuedDelivery({
 					channel?.postMessage({ scope, generation: state.generation });
 				const next: ConsentState = { generation: crypto.randomUUID() };
 				outbox.setConsent(next);
-				for (const entry of await outbox.list())
-					outbox.remove(entry.record.event_id);
+				await outbox.removeAll();
 			});
 		},
 
@@ -271,6 +314,11 @@ export function createQueuedDelivery({
 
 		/** Returns after committing the envelope. A receiver acknowledgement removes it later. */
 		async enqueue(record: Envelope, signal: AbortSignal) {
+			if (
+				new TextEncoder().encode(JSON.stringify(record)).length > maxRecordBytes
+			)
+				throw new RangeError("collection record is too large");
+
 			const lease = active;
 			if (!lease) throw new Error("collection consent is inactive");
 			const stored = await updateOutbox(
@@ -284,22 +332,19 @@ export function createQueuedDelivery({
 					)
 						return;
 					const now = Date.now();
-					let occupied = 0;
-					let expired = 0;
-					for (const entry of await outbox.list()) {
-						if (entry.expiresAt <= now) {
-							outbox.remove(entry.record.event_id);
-							expired++;
-						} else occupied++;
-					}
+					const expired = await outbox.expire(now);
+					const occupied = await outbox.count();
 					if (signal.aborted || lease.controller.signal.aborted) return;
-					if (occupied >= capacity) return { accepted: false, expired };
+					const priority = deliveryPriority(record);
+					const limit = priority ? capacity - protectedCapacity : capacity;
+					if (occupied >= limit) return { accepted: false, expired };
 					outbox.put({
 						scope,
 						record,
 						expiresAt: now + retentionMs,
 						nextAttempt: now,
 						attempts: 0,
+						priority,
 					});
 					return { accepted: true, expired };
 				},
@@ -313,7 +358,8 @@ export function createQueuedDelivery({
 				notify("capacity");
 				throw new RangeError("collection queue is full");
 			}
-			wake();
+			if (!sendBatch || drain) wake();
+			else coalesce ??= setTimeout(wake, coalesceMs);
 		},
 
 		async close() {

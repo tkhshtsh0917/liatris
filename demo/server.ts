@@ -44,6 +44,7 @@ const files = new Map([
 	],
 ]);
 for (const name of [
+	"batch",
 	"bearer",
 	"collector",
 	"endpoint",
