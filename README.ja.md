@@ -34,11 +34,12 @@ inactivityMinutes = 15
 
 - [収集プロファイル](examples/shop.toml) は許可する項目を宣言し、サンプルデモの検索語収集を明示的に有効にします。[YAML の例](examples/shop.yaml)。
 - [ブラウザでの組み込み例](demo/browser.ts) では、同意、検索とクリックの収集、HTTP/JSON 配送を確認できます。
+- [永続配送](docs/ja/delivery.md) では、ローカルへの保存、再送、Kinesis の検証を説明します。
 - [セキュリティとプライバシー](docs/ja/security.md) では、Cookie、同意、認証、公開時の制御を説明します。
 - [ロードマップ](docs/ja/roadmap.md) は実装と検証のマイルストーンを示します。
-- [設計](docs/ja/design.md) では、UBI のスキーマモード、セッションポリシー、計画中の配送アダプターを説明します。
+- [設計](docs/ja/design.md) では、UBI のスキーマモード、セッションポリシー、配送方式を説明します。
 - [イベント契約](docs/ja/event-contracts.md) では、EC・求人サイトのイベント定義例を示します。
 
 収集プロファイルだけをコンパイルするには `mkdir -p dist && npm run profile -- examples/shop.toml dist/shop.profile.json` を実行します。コンパイラは正規化済み JSON を書き込み、SHA-256 を表示します。
 
-デモと参考受信実装はローカルで動作します。タグ配布、耐久性のあるキュー、Kinesis・gRPC アダプターは計画段階です。
+デモは IndexedDB キューと SQLite のリファレンス受信実装を使い、必要に応じて Kinesis ワーカーを利用できます。タグ配布と gRPC はロードマップに記載しています。
