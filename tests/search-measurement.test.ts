@@ -171,3 +171,38 @@ test("records a rendered response while the submitted event awaits delivery", as
 	}
 	await search.submitted;
 });
+
+test("captures host-supplied variant metadata without altering generated fields", async () => {
+	const { collector, sent, meter } = setup();
+	await collector.setConsent(true);
+	const search = meter.beginSearch("assigned-by-site");
+	await search.submitted;
+
+	assert.throws(
+		() =>
+			search.render({ ...settings, metadata: { result_count: 9 } }, () =>
+				assert.fail("render used conflicting metadata"),
+			),
+		/generated field/,
+	);
+	const undeclared = search.render(
+		{ ...settings, metadata: { undeclared: true } },
+		() => {},
+	);
+	assert.ok(undeclared);
+	await assert.rejects(undeclared, /undeclared field/);
+
+	const metadata = { experiment_id: "search-ranking", variant: "treatment" };
+	const rendered = search.render({ ...settings, metadata }, () => {
+		metadata.variant = "control";
+	});
+	assert.equal(await rendered, "sent");
+	assert.equal(sent.length, 2);
+	assert.deepEqual(sent[1].metadata, {
+		experiment_id: "search-ranking",
+		variant: "treatment",
+		result_set: sent[1].metadata?.result_set,
+		result_count: 0,
+		ranking_version: "ranker-v1",
+	});
+});

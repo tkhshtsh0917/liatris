@@ -43,11 +43,17 @@ Test delayed responses, rate-limited or retried actions, repeated rendering, vir
 
 Create a `createSearchMeasurement(collector)` instance per result surface. Call `beginSearch(queryId)` for each deliberate search. The helper sends `search_submitted` with the opaque query ID. The optional `trackQueryText` sends a separate UBI Query when the profile permits it.
 
-Declare `search_submitted` and `results_shown` in the profile. Use `minimum: 0` on the integer fields for displayed count and click delay. Call `search.render({ resultCount, rankingVersion }, draw)` when a response is ready to display. The helper accepts the current request for that surface, passes the result-set ID to the synchronous UI callback, and sends `results_shown` after the callback succeeds. A discarded stale response leaves the UI and measurement untouched. Call `clear()` when the surface is left or reset. For a framework with asynchronous commits, run the measurement from the point where the new results have committed.
+Declare `search_submitted` and `results_shown` in the profile. Use `minimum: 0` on the integer fields for displayed count and click delay. Call `search.render({ resultCount, rankingVersion, metadata }, draw)` when a response is ready to display. The helper accepts the current request for that surface, passes the result-set ID to the synchronous UI callback, and sends `results_shown` after the callback succeeds. A discarded stale response leaves the UI and measurement untouched. Call `clear()` when the surface is left or reset. For a framework with asynchronous commits, run the measurement from the point where the new results have committed.
 
 Use the returned display context in impression and click events. Call `firstClickDelay()` on the first actual result click and attach its value as `first_click_ms` if available. A later click on the same set omits this field. Every committed replacement set has its own measurement and ID. The initial search and its rendered response use the same search session even if the response arrives after the inactivity boundary.
 
 Count submitted searches by distinct query ID, and shown sets by distinct query and result-set ID. A shown set with `result_count = 0` is an observed zero-result set. A submitted search with no recorded render has an unknown result count. Calculate impression-based CTR from observed result-slot exposures, joined by query, result set, item and displayed rank. A click without a matching exposure is a separate coverage case.
+
+## Recording an experiment variant
+
+The host chooses the assignment unit and variant using its own experimentation system. Declare the fields on the relevant event in the collection profile. Use `metadata` to pass the assignment already applied by the host. The sample profile accepts optional `experiment_id` and `variant` on `results_shown`. Attach them to the rendered set so later clicks can join by `query_id` and `result_set`.
+
+For example, pass `metadata: { experiment_id: "search-ranking", variant: "treatment" }` to `search.render` after the host selects the ranking treatment. On other events, pass declared fields through `trackEvent`. Use experiment and variant labels and keep user or account identifiers out of these fields. The helper generates the result-set ID, result count and ranking version from the render arguments. Custom metadata cannot replace them.
 
 ## Duration and search metrics
 

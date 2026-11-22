@@ -23,6 +23,14 @@ type = "string"
 maxLength = 100
 required = true
 
+[events.results_shown.fields.experiment_id]
+type = "string"
+maxLength = 64
+
+[events.results_shown.fields.variant]
+type = "string"
+maxLength = 64
+
 [events.click.fields.first_click_ms]
 type = "integer"
 minimum = 0

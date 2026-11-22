@@ -1,11 +1,18 @@
 import type { createCollector } from "./collector.ts";
-import { readString } from "./fields.ts";
+import { readObject, readString } from "./fields.ts";
+import type { EventInput } from "./records.ts";
 
 type Collector = Pick<
 	ReturnType<typeof createCollector>,
 	"trackEventWithObservation"
 >;
-type RenderedResults = { resultCount: number; rankingVersion: string };
+type Metadata = NonNullable<EventInput["metadata"]>;
+type RenderedResults = {
+	resultCount: number;
+	rankingVersion: string;
+	metadata?: Metadata;
+};
+const generatedFields = ["result_set", "result_count", "ranking_version"];
 
 export type DisplayedSearchResults = {
 	readonly queryId: string;
@@ -46,7 +53,7 @@ export function createSearchMeasurement(collector: Collector) {
 
 				/** Commits a current response and emits a snapshot after the UI update. */
 				render(
-					{ resultCount, rankingVersion }: RenderedResults,
+					{ resultCount, rankingVersion, metadata = {} }: RenderedResults,
 					draw: (display: DisplayedSearchResults | undefined) => void,
 				) {
 					if (latest !== request) return;
@@ -59,6 +66,13 @@ export function createSearchMeasurement(collector: Collector) {
 					if (!observation || observation.signal.aborted) {
 						draw(undefined);
 						return;
+					}
+
+					const fields = readObject(metadata) as Metadata;
+					if (generatedFields.some((field) => Object.hasOwn(fields, field))) {
+						throw new TypeError(
+							"render metadata cannot supply a generated field",
+						);
 					}
 
 					const resultSet = crypto.randomUUID();
@@ -82,6 +96,7 @@ export function createSearchMeasurement(collector: Collector) {
 					return observation.trackEvent("results_shown", {
 						query_id: queryId,
 						metadata: {
+							...fields,
 							result_set: resultSet,
 							result_count: resultCount,
 							ranking_version: rankingVersion,
