@@ -1,6 +1,6 @@
 # Liatris design
 
-[日本語](ja/design.md) · [Roadmap](roadmap.md)
+[日本語](ja/design.md) · [Roadmap](roadmap.md) · [Security and privacy](security.md)
 
 ## Collection and event contracts
 
@@ -18,7 +18,7 @@ The default session timeout is 30 minutes of inactivity. Same-origin tabs can sh
 
 The HTTP/JSON sender omits ambient credentials and the referrer. The receiver requires an explicit access policy. Its bearer mode checks authenticated claims against the configured audience, expiry, tenant, application, and `liatris:write` permission before processing the body. The demo selects direct loopback access.
 
-The local reference receiver accepts HTTP/JSON, checks the profile hash and payload, and responds after its sink completes. The demo sink prints accepted records to the terminal. Its acknowledgement reflects that sink's behavior. A production sink should persist or enqueue the record durably before acknowledging it.
+The local reference receiver accepts HTTP/JSON, checks the profile hash and payload, and responds after its sink completes. The demo sink prints accepted record categories to the terminal. Its acknowledgement reflects that sink's behavior. A production sink should persist or enqueue the record durably before acknowledging it.
 
 Future adapters should share the same validation, acknowledgement and error contract. Browser-to-receiver RPC can use unary gRPC-Web against a compatible endpoint. Receiver-to-service forwarding can use native gRPC or a Kinesis adapter. The next delivery milestone adds a bounded queue, retry policy and receiver-side deduplication using `event_id`. Browser unload and offline recovery require separate tests. [gRPC-Web protocol](https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-WEB.md)
 

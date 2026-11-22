@@ -4,6 +4,9 @@ import { type Envelope, maxRecordBytes } from "../src/records.ts";
 import { createIntakeAccess, type IntakeAccess } from "./access.ts";
 import { validateRecord } from "./validate.ts";
 
+type HttpReceiverOptions = IntakeAccess & { bodyTimeoutMs?: number };
+const bodyTimedOut = Symbol("body timed out");
+
 async function readBoundedBody(request: IncomingMessage) {
 	const chunks: Buffer[] = [];
 	let size = 0;
@@ -19,8 +22,25 @@ async function readBoundedBody(request: IncomingMessage) {
 	);
 }
 
+async function readBody(request: IncomingMessage, timeoutMs: number) {
+	let timer: NodeJS.Timeout | undefined;
+	const deadline = new Promise<typeof bodyTimedOut>((resolve) => {
+		timer = setTimeout(() => resolve(bodyTimedOut), timeoutMs);
+	});
+	try {
+		return await Promise.race([readBoundedBody(request), deadline]);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
 function reply(response: ServerResponse, status: number) {
 	response.writeHead(status, { "cache-control": "no-store" }).end();
+}
+
+function closeWithStatus(response: ServerResponse, status: number) {
+	response.setHeader("connection", "close");
+	reply(response, status);
 }
 
 /** Receives one bounded JSON record and acknowledges it after the sink accepts it. */
@@ -28,37 +48,52 @@ export function createHttpReceiver(
 	profile: Profile,
 	profileHash: string,
 	accept: (record: Envelope) => Promise<void>,
-	access: IntakeAccess,
+	options: HttpReceiverOptions,
 ) {
-	const rejectAccess = createIntakeAccess(profile, access);
+	const checkAccess = createIntakeAccess(profile, options);
+	const bodyTimeoutMs = options.bodyTimeoutMs ?? 10_000;
+	if (
+		!Number.isInteger(bodyTimeoutMs) ||
+		bodyTimeoutMs < 1 ||
+		bodyTimeoutMs > 60_000
+	) {
+		throw new RangeError(
+			"body timeout must be between 1 and 60000 milliseconds",
+		);
+	}
+
 	return async (request: IncomingMessage, response: ServerResponse) => {
 		if (request.method !== "POST") {
 			response.setHeader("allow", "POST");
-			return reply(response, 405);
-		}
-		if (
-			request.headers["content-type"]?.split(";")[0]?.trim().toLowerCase() !==
-			"application/json"
-		) {
-			request.resume();
-			return reply(response, 415);
+			return closeWithStatus(response, 405);
 		}
 
-		const accessFailure = await rejectAccess(request);
+		const {
+			"content-type": type,
+			"content-encoding": encoding,
+			"content-length": declaredLength,
+		} = request.headers;
+		if (
+			type?.split(";")[0]?.trim().toLowerCase() !== "application/json" ||
+			(encoding !== undefined && encoding.trim().toLowerCase() !== "identity")
+		)
+			return closeWithStatus(response, 415);
+		if (Number(declaredLength) > maxRecordBytes)
+			return closeWithStatus(response, 413);
+
+		const accessFailure = await checkAccess(request);
 		if (accessFailure !== undefined) {
-			response.setHeader("connection", "close");
 			if (accessFailure === 401)
 				response.setHeader("www-authenticate", "Bearer");
-			return reply(response, accessFailure);
+			return closeWithStatus(response, accessFailure);
 		}
 
 		let record: Envelope;
 		try {
-			const body = await readBoundedBody(request);
-			if (body === undefined) {
-				response.setHeader("connection", "close");
-				return reply(response, 413);
-			}
+			const body = await readBody(request, bodyTimeoutMs);
+			if (body === bodyTimedOut) return closeWithStatus(response, 408);
+			if (body === undefined) return closeWithStatus(response, 413);
+
 			const value: unknown = JSON.parse(body);
 			record = validateRecord(value, profile, profileHash);
 		} catch {

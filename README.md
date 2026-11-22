@@ -16,7 +16,7 @@ mise run check
 npm run demo
 ```
 
-Open [the local demo](http://127.0.0.1:4173/), allow collection, search the sample catalog, and click the second result. The demo prints the accepted query, impressions and click in the terminal. They share a query ID and session ID. The impressions and click also include the displayed result-set ID, and the click records rank 2. The **no results** sample captures a query without a click.
+Open [the local demo](http://127.0.0.1:4173/), allow collection, search the sample catalog, and click the second result. The demo prints the accepted categories in the terminal. Inspect the local requests to see that the query, impressions and click share a query ID and session ID. The impressions and click also include the displayed result-set ID, and the click records rank 2. The **no results** sample captures a query without a click.
 
 ## Configure measurement
 
@@ -34,6 +34,7 @@ The defaults are 50% visible card area and 30 minutes of session inactivity. Omi
 
 - [Collection profile](examples/shop.toml) declares allowed fields and opts in to query text for the synthetic demo. [YAML example](examples/shop.yaml).
 - [Browser integration](demo/browser.ts) shows consent, search and click capture, and the HTTP/JSON transport.
+- [Security and privacy](docs/security.md) covers cookies, consent, authentication and deployment controls.
 - [Roadmap](docs/roadmap.md) tracks implementation and verification milestones.
 - [Design](docs/design.md) explains UBI schema modes, session policy, and planned delivery adapters.
 - [Event contracts](docs/event-contracts.md) shows how to define events for commerce and jobs.

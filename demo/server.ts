@@ -18,7 +18,7 @@ const receive = createHttpReceiver(
 	profile,
 	sha256,
 	async (record) => {
-		console.log(JSON.stringify(record));
+		console.log("accepted", record.kind, record.payload.action_name ?? "query");
 	},
 	{ loopbackOrigin: origin },
 );
@@ -54,35 +54,55 @@ for (const name of [
 	]);
 }
 
-const server = createServer(async (request, response) => {
-	response.setHeader("x-content-type-options", "nosniff");
-	response.setHeader("cache-control", "no-store");
+const pagePolicy = [
+	"default-src 'none'",
+	"script-src 'self' 'wasm-unsafe-eval'",
+	"connect-src 'self'",
+	"base-uri 'none'",
+	"form-action 'self'",
+	"frame-ancestors 'none'",
+].join("; ");
 
-	if (request.url === profile.endpoint) {
-		await receive(request, response);
-		return;
-	}
-	if (request.method !== "GET") {
-		response.writeHead(405, { allow: "GET" }).end();
-		return;
-	}
-	if (request.url === "/demo-config.json") {
-		response
-			.writeHead(200, { "content-type": "application/json" })
-			.end(JSON.stringify({ profile, sha256 }));
-		return;
-	}
+const server = createServer(
+	{ headersTimeout: 5_000, requestTimeout: 15_000, maxHeaderSize: 8192 },
+	async (request, response) => {
+		response.setHeader("x-content-type-options", "nosniff");
+		response.setHeader("cache-control", "no-store");
+		response.setHeader("referrer-policy", "no-referrer");
 
-	const asset = files.get(request.url ?? "");
-	if (!asset) {
-		response.writeHead(404).end();
-		return;
-	}
-	try {
-		const body = await readFile(new URL(asset[0], import.meta.url));
-		response.writeHead(200, { "content-type": asset[1] }).end(body);
-	} catch {
-		response.writeHead(503).end();
-	}
-});
+		if (request.headers.host !== new URL(origin).host) {
+			response.writeHead(403, { connection: "close" }).end();
+			return;
+		}
+
+		if (request.url === profile.endpoint) {
+			await receive(request, response);
+			return;
+		}
+		if (request.method !== "GET") {
+			response.writeHead(405, { allow: "GET" }).end();
+			return;
+		}
+		if (request.url === "/demo-config.json") {
+			response
+				.writeHead(200, { "content-type": "application/json" })
+				.end(JSON.stringify({ profile, sha256 }));
+			return;
+		}
+
+		const asset = files.get(request.url ?? "");
+		if (!asset) {
+			response.writeHead(404).end();
+			return;
+		}
+		try {
+			const body = await readFile(new URL(asset[0], import.meta.url));
+			if (request.url === "/")
+				response.setHeader("content-security-policy", pagePolicy);
+			response.writeHead(200, { "content-type": asset[1] }).end(body);
+		} catch {
+			response.writeHead(503).end();
+		}
+	},
+);
 server.listen(port, "127.0.0.1", () => console.log(origin));
