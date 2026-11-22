@@ -1,0 +1,16 @@
+services:
+  moto:
+    image: ghcr.io/getmoto/motoserver:5.2.4
+
+  verification:
+    build:
+      context: ../..
+      dockerfile: integration/kinesis/Dockerfile
+    depends_on:
+      - moto
+    environment:
+      AWS_ENDPOINT_URL_KINESIS: http://moto:5000
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: moto-test
+      AWS_SECRET_ACCESS_KEY: moto-test
+      AWS_EC2_METADATA_DISABLED: "true"
