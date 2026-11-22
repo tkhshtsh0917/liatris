@@ -4,6 +4,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { parse } from "yaml";
 import schema from "../schema/profile.schema.json" with { type: "json" };
 
+import { checkEndpoint } from "../src/endpoint.ts";
 import { defaultMinVisiblePercent, type Profile } from "../src/profile.ts";
 
 type InputProfile = Omit<
@@ -22,27 +23,6 @@ const ajv = new Ajv2020({
 	ownProperties: true,
 });
 const validator = ajv.compile<InputProfile>(schema);
-const relativeOrigin = "https://profile.invalid";
-
-function checkEndpoint(value: string): void {
-	if (/\s|\\|[?#]/.test(value) || value.startsWith("//")) {
-		throw new Error("invalid collection endpoint");
-	}
-
-	const relative = value.startsWith("/");
-	const url = new URL(value, relativeOrigin);
-	if (
-		url.protocol !== "https:" ||
-		url.username ||
-		url.password ||
-		(relative ? url.origin !== relativeOrigin : !/^https:\/\//i.test(value))
-	) {
-		throw new Error(
-			"collection endpoint must be a same-origin path or HTTPS URL",
-		);
-	}
-}
-
 function sortKeys(value: unknown): unknown {
 	if (Array.isArray(value)) return value.map(sortKeys);
 	if (typeof value !== "object" || value === null) return value;

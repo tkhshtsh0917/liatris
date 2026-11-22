@@ -10,6 +10,8 @@ import {
 import { clearSession, createSessionManager } from "./session.ts";
 import type { SessionStore } from "./session-store.ts";
 
+export { createHttpDelivery } from "./http-delivery.ts";
+
 export type Delivery = (record: Envelope, signal: AbortSignal) => Promise<void>;
 type Status = "sent" | "no-consent" | "query-text-disabled";
 
@@ -155,20 +157,5 @@ export function createCollector({
 			const data = readEvent(profile, name, value);
 			return capture(consent.signal, "event", data);
 		},
-	};
-}
-
-/** Sends a JSON record and waits for an HTTP success response. */
-export function createHttpDelivery(endpoint: string): Delivery {
-	return async (record, signal) => {
-		const response = await fetch(endpoint, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify(record),
-			credentials: "same-origin",
-			redirect: "error",
-			signal,
-		});
-		if (!response.ok) throw new Error(`collection failed (${response.status})`);
 	};
 }

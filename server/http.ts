@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Profile } from "../src/profile.ts";
 import { type Envelope, maxRecordBytes } from "../src/records.ts";
+import { createIntakeAccess, type IntakeAccess } from "./access.ts";
 import { validateRecord } from "./validate.ts";
 
 async function readBoundedBody(request: IncomingMessage) {
@@ -27,7 +28,9 @@ export function createHttpReceiver(
 	profile: Profile,
 	profileHash: string,
 	accept: (record: Envelope) => Promise<void>,
+	access: IntakeAccess,
 ) {
+	const rejectAccess = createIntakeAccess(profile, access);
 	return async (request: IncomingMessage, response: ServerResponse) => {
 		if (request.method !== "POST") {
 			response.setHeader("allow", "POST");
@@ -39,6 +42,14 @@ export function createHttpReceiver(
 		) {
 			request.resume();
 			return reply(response, 415);
+		}
+
+		const accessFailure = await rejectAccess(request);
+		if (accessFailure !== undefined) {
+			response.setHeader("connection", "close");
+			if (accessFailure === 401)
+				response.setHeader("www-authenticate", "Bearer");
+			return reply(response, accessFailure);
 		}
 
 		let record: Envelope;

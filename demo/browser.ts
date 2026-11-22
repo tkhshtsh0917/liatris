@@ -13,7 +13,10 @@ const catalog: Record<string, Target[]> = {
 	"no results": [],
 };
 
-const config = await fetch("/demo-config.json", { cache: "no-store" });
+const config = await fetch("/demo-config.json", {
+	cache: "no-store",
+	credentials: "omit",
+});
 if (!config.ok) throw new Error("could not load the demo profile");
 const { profile, sha256 } = (await config.json()) as {
 	profile: Profile;
@@ -24,7 +27,7 @@ const collector = createCollector({
 	profileHash: sha256,
 	openStore: openSessionStore,
 	async loadWasm() {
-		const response = await fetch("/session.wasm");
+		const response = await fetch("/session.wasm", { credentials: "omit" });
 		if (!response.ok) throw new Error("could not load the session module");
 		return response.arrayBuffer();
 	},

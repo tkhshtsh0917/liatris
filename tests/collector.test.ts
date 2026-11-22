@@ -3,11 +3,7 @@ import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import test from "node:test";
 import { createHttpReceiver } from "../server/http.ts";
-import {
-	createCollector,
-	createHttpDelivery,
-	type Delivery,
-} from "../src/collector.ts";
+import { createCollector, type Delivery } from "../src/collector.ts";
 import type { Envelope } from "../src/records.ts";
 import { memorySessionStore } from "../src/session-store.ts";
 import { compileProfile } from "../tools/profile.ts";
@@ -52,20 +48,32 @@ function fixture(deliver: Delivery, config = profile) {
 
 test("sends query and click through the HTTP receiver with the same session and actual rank", async (t) => {
 	const records: Envelope[] = [];
-	const server = createServer(
-		createHttpReceiver(profile, sha256, async (record) => {
-			records.push(record);
-		}),
-	);
+	const server = createServer();
 	t.after(() => {
 		server.close();
 	});
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	const address = server.address();
 	assert.ok(address && typeof address === "object");
-	const { collector } = fixture(
-		createHttpDelivery(`http://127.0.0.1:${address.port}/api/ubi`),
+	const origin = `http://127.0.0.1:${address.port}`;
+	const receive = createHttpReceiver(
+		profile,
+		sha256,
+		async (record) => {
+			records.push(record);
+		},
+		{ loopbackOrigin: origin },
 	);
+	server.on("request", receive);
+	const { collector } = fixture(async (record, signal) => {
+		const response = await fetch(`${origin}/api/ubi`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(record),
+			signal,
+		});
+		assert.equal(response.status, 204);
+	});
 
 	await collector.setConsent(true);
 	assert.equal(await collector.trackQuery(query), "sent");

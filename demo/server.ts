@@ -14,9 +14,14 @@ const { profile, sha256 } = compileProfile(
 	"toml",
 );
 
-const receive = createHttpReceiver(profile, sha256, async (record) => {
-	console.log(JSON.stringify(record));
-});
+const receive = createHttpReceiver(
+	profile,
+	sha256,
+	async (record) => {
+		console.log(JSON.stringify(record));
+	},
+	{ loopbackOrigin: origin },
+);
 const files = new Map([
 	["/", ["./index.html", "text/html; charset=utf-8"]],
 	[
@@ -32,9 +37,12 @@ const files = new Map([
 	],
 ]);
 for (const name of [
+	"bearer",
 	"collector",
+	"endpoint",
 	"fields",
 	"impressions",
+	"http-delivery",
 	"profile",
 	"records",
 	"session",
@@ -51,10 +59,6 @@ const server = createServer(async (request, response) => {
 	response.setHeader("cache-control", "no-store");
 
 	if (request.url === profile.endpoint) {
-		if (request.headers.origin && request.headers.origin !== origin) {
-			response.writeHead(403).end();
-			return;
-		}
 		await receive(request, response);
 		return;
 	}
