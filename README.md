@@ -16,7 +16,19 @@ mise run check
 npm run demo
 ```
 
-Open [the local demo](http://127.0.0.1:4173/), allow collection, search the sample catalog, and click the second result. The demo prints the accepted Query and Event in the terminal. They share a query ID and session ID, and the click records rank 2. The **no results** sample captures a query without a click.
+Open [the local demo](http://127.0.0.1:4173/), allow collection, search the sample catalog, and click the second result. The demo prints the accepted query, impressions and click in the terminal. They share a query ID and session ID. The impressions and click also include the displayed result-set ID, and the click records rank 2. The **no results** sample captures a query without a click.
+
+## Configure measurement
+
+```toml
+[impressions]
+minVisiblePercent = 70
+
+[session]
+inactivityMinutes = 15
+```
+
+The defaults are 50% visible card area and 30 minutes of session inactivity. Omit the sections to use the defaults. Impression tracking requires the application to register its result cards. [Measurement contract](docs/event-contracts.md#card-impressions).
 
 ## Explore the integration
 

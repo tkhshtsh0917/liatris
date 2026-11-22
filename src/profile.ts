@@ -4,6 +4,8 @@ export type FieldRule = { required?: boolean } & (
 	| { type: "integer" | "number" | "boolean" }
 );
 
+export const defaultMinVisiblePercent = 50;
+
 export type FieldRules = Record<string, FieldRule>;
 export type ExtensionPath =
 	| "query_attributes"
@@ -21,6 +23,7 @@ export type Profile = {
 	endpoint: string;
 	allowQueryText: boolean;
 	session: { inactivityMinutes: number };
+	impressions: { minVisiblePercent: number };
 	events: Record<string, { fields?: FieldRules }>;
 	extensions?: Partial<Record<ExtensionPath, FieldRules>>;
 };

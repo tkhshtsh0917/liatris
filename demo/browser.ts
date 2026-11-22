@@ -1,5 +1,7 @@
 import { createCollector, createHttpDelivery } from "../src/collector.ts";
+import { observeResultImpressions } from "../src/impressions.ts";
 import type { Profile } from "../src/profile.ts";
+import type { EventInput } from "../src/records.ts";
 import { openSessionStore } from "../src/session-store.ts";
 
 type Target = { id: string; title: string };
@@ -50,33 +52,62 @@ async function report(operation: Promise<string>) {
 	}
 }
 
-function showResults(queryId: string | undefined, hits: Target[]) {
+type Display = { queryId: string; resultSet: string };
+let impressions: ReturnType<typeof observeResultImpressions> | undefined;
+
+function resultEvent(
+	display: Display,
+	target: Target,
+	ordinal: number,
+): EventInput {
+	return {
+		query_id: display.queryId,
+		event_attributes: {
+			position: { ordinal },
+			object: { object_id: target.id, object_id_type: "product" },
+		},
+		metadata: { result_set: display.resultSet },
+	};
+}
+
+function showResults(display: Display | undefined, hits: Target[]) {
+	impressions?.close();
+	impressions =
+		display && hits.length
+			? observeResultImpressions(profile.impressions, (ordinal) => {
+					const hit = hits[ordinal - 1];
+					if (!hit) return;
+
+					void collector
+						.trackEvent("result_impression", resultEvent(display, hit, ordinal))
+						.catch(() => {
+							status.textContent = "Impression capture failed.";
+						});
+				})
+			: undefined;
+
 	const items = hits.map((hit, index) => {
 		const item = document.createElement("li");
 		const button = document.createElement("button");
 		button.type = "button";
 		button.textContent = hit.title;
 		button.addEventListener("click", () => {
-			if (queryId === undefined) return;
-			void report(
-				collector.trackEvent("click", {
-					query_id: queryId,
-					event_attributes: {
-						position: { ordinal: index + 1 },
-						object: { object_id: hit.id, object_id_type: "product" },
-					},
-					metadata: { result_set: queryId },
-				}),
-			);
+			if (display)
+				void report(
+					collector.trackEvent("click", resultEvent(display, hit, index + 1)),
+				);
 		});
 		item.append(button);
-		return item;
+		return { item, button };
 	});
-	results.replaceChildren(...items);
+	results.replaceChildren(...items.map(({ item }) => item));
+	items.forEach(({ button }, index) => {
+		impressions?.observe(button, index + 1);
+	});
 }
 
 consent.addEventListener("change", () => {
-	results.replaceChildren();
+	showResults(undefined, []);
 	summary.textContent = "";
 	void report(
 		collector
@@ -93,7 +124,12 @@ form.addEventListener("submit", (event) => {
 	const queryId = consent.checked ? crypto.randomUUID() : undefined;
 	const term = searchTerm.value;
 	const hits = catalog[term] ?? [];
-	showResults(queryId, hits);
+	showResults(
+		queryId === undefined
+			? undefined
+			: { queryId, resultSet: crypto.randomUUID() },
+		hits,
+	);
 	summary.textContent = `${hits.length} result(s)`;
 	if (queryId !== undefined) {
 		void report(collector.trackQuery({ query_id: queryId, user_query: term }));

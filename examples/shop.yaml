@@ -9,6 +9,9 @@ events:
   click:
     fields:
       result_set: { type: string, maxLength: 100, required: true }
+  result_impression:
+    fields:
+      result_set: { type: string, maxLength: 100, required: true }
   add_cart: {}
 extensions:
   query_attributes:

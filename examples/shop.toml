@@ -11,6 +11,11 @@ type = "string"
 maxLength = 100
 required = true
 
+[events.result_impression.fields.result_set]
+type = "string"
+maxLength = 100
+required = true
+
 [events.add_cart]
 
 [extensions.query_attributes.experiment_id]

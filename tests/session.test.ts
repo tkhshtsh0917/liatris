@@ -72,3 +72,19 @@ test("recovers from a rejected timestamp and clamps small clock reversals", asyn
 		RangeError,
 	);
 });
+
+test("starts a new WASM session at the configured inactivity boundary", async () => {
+	const manager = await createSessionManager(
+		wasm,
+		memorySessionStore(),
+		scope,
+		15,
+	);
+	const first = await manager.recordActivity(0);
+	const latest = await manager.recordActivity(899_999);
+	assert.equal(latest.sessionId, first.sessionId);
+
+	const next = await manager.recordActivity(1_799_999);
+	assert.notEqual(next.sessionId, first.sessionId);
+	assert.equal(next.sessionNumber, 2);
+});

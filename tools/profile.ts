@@ -4,13 +4,14 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { parse } from "yaml";
 import schema from "../schema/profile.schema.json" with { type: "json" };
 
-import type { Profile } from "../src/profile.ts";
+import { defaultMinVisiblePercent, type Profile } from "../src/profile.ts";
 
 type InputProfile = Omit<
 	Profile,
-	"session" | "schemaMode" | "allowQueryText"
+	"session" | "impressions" | "schemaMode" | "allowQueryText"
 > & {
 	session?: Partial<Profile["session"]>;
+	impressions?: Partial<Profile["impressions"]>;
 	schemaMode?: Profile["schemaMode"];
 	allowQueryText?: boolean;
 };
@@ -86,6 +87,10 @@ export function compileProfile(source: string, format: keyof typeof parsers) {
 		schemaMode: input.schemaMode ?? "strict",
 		allowQueryText: input.allowQueryText ?? false,
 		session: { inactivityMinutes: input.session?.inactivityMinutes ?? 30 },
+		impressions: {
+			minVisiblePercent:
+				input.impressions?.minVisiblePercent ?? defaultMinVisiblePercent,
+		},
 	};
 	const json = `${JSON.stringify(sortKeys(profile), null, 2)}\n`;
 	const sha256 = createHash("sha256").update(json).digest("hex");

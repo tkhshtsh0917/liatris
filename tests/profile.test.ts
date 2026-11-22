@@ -74,3 +74,34 @@ test("rejects YAML aliases and duplicate keys", () => {
 		/unique/i,
 	);
 });
+
+test("normalizes visibility and accepts custom visibility and session settings across formats", () => {
+	assert.equal(input.impressions.minVisiblePercent, 50);
+
+	const impressions = { minVisiblePercent: 70 };
+	const session = { inactivityMinutes: 15 };
+	const expected = compile({ impressions, session });
+	assert.deepEqual(
+		compileProfile(
+			`${toml}\n[impressions]\nminVisiblePercent = 70\n[session]\ninactivityMinutes = 15\n`,
+			"toml",
+		),
+		expected,
+	);
+	assert.deepEqual(
+		compileProfile(
+			`${yaml}\nimpressions: { minVisiblePercent: 70 }\nsession: { inactivityMinutes: 15 }\n`,
+			"yaml",
+		),
+		expected,
+	);
+	assert.deepEqual(expected.profile.impressions, impressions);
+	assert.deepEqual(expected.profile.session, session);
+
+	for (const minVisiblePercent of [0, 101, 70.5, "70"]) {
+		assert.throws(() => compile({ impressions: { minVisiblePercent } }));
+	}
+	for (const inactivityMinutes of [0, 1441, 30.5, "30"]) {
+		assert.throws(() => compile({ session: { inactivityMinutes } }));
+	}
+});

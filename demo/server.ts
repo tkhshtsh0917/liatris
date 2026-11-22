@@ -34,6 +34,8 @@ const files = new Map([
 for (const name of [
 	"collector",
 	"fields",
+	"impressions",
+	"profile",
 	"records",
 	"session",
 	"session-store",

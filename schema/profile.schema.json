@@ -40,6 +40,17 @@
 				}
 			}
 		},
+		"impressions": {
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"minVisiblePercent": {
+					"type": "integer",
+					"minimum": 1,
+					"maximum": 100
+				}
+			}
+		},
 		"extensions": {
 			"type": "object",
 			"additionalProperties": false,
