@@ -4,7 +4,7 @@
 
 Configurable browser event collection for User Behavior Insights, powered by Rust and WebAssembly.
 
-Liatris uses a Rust/WASM session policy and a TypeScript collector. Configure event names and fields in TOML, YAML, or JSON, then call the collector from the application when each event occurs.
+Liatris uses a Rust/WASM session policy and a TypeScript collector. Configure event names and fields in TOML, YAML, or JSON, then call the collector from the application when each event occurs. The profile declares what to collect. The application supplies when it happened and its context, such as the result ID and displayed rank.
 
 ## Run the local demo
 
@@ -42,4 +42,4 @@ The defaults are 50% visible card area and 30 minutes of session inactivity. Omi
 
 To compile a profile separately, run `mkdir -p dist && npm run profile -- examples/shop.toml dist/shop.profile.json`. The compiler writes normalized JSON and prints its SHA-256.
 
-The demo uses an IndexedDB queue and a SQLite reference receiver. Server-side adapters forward accepted events to the deployment’s streaming destination. The repository includes an Amazon Kinesis Data Streams adapter as a working example. Tag distribution and gRPC are listed in the roadmap.
+The demo uses an IndexedDB queue and a SQLite reference receiver. Server-side adapters forward accepted events to the deployment’s streaming destination. The repository includes an Amazon Kinesis Data Streams adapter as a working example. SDK distribution, a script loader option and gRPC are listed in the roadmap.

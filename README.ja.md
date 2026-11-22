@@ -4,7 +4,7 @@
 
 Rust と WebAssembly を使う、設定可能な User Behavior Insights 向けブラウザイベント収集ツールです。
 
-Liatris は Rust/WASM のセッション判定と TypeScript のコレクターを使います。TOML、YAML、JSON でイベント名と項目を設定し、イベントが発生した時点でアプリケーションからコレクターを呼び出します。
+Liatris は Rust/WASM のセッション判定と TypeScript のコレクターを使います。TOML、YAML、JSON で収集するイベント名と項目を設定します。アプリケーションはイベントが発生した時点でコレクターを呼び、結果 ID や表示順位などの文脈を渡します。
 
 ## ローカルデモを実行する
 
@@ -42,4 +42,4 @@ inactivityMinutes = 15
 
 収集プロファイルだけをコンパイルするには `mkdir -p dist && npm run profile -- examples/shop.toml dist/shop.profile.json` を実行します。コンパイラは正規化済み JSON を書き込み、SHA-256 を表示します。
 
-デモは IndexedDB キューと SQLite のリファレンス受信実装を使います。受領済みのイベントは、サーバー側のアダプターで導入先のストリーミング基盤へ転送できます。動作する接続例として Amazon Kinesis Data Streams 用のアダプターを同梱しています。タグ配布と gRPC はロードマップに記載しています。
+デモは IndexedDB キューと SQLite のリファレンス受信実装を使います。受領済みのイベントは、サーバー側のアダプターで導入先のストリーミング基盤へ転送できます。動作する接続例として Amazon Kinesis Data Streams 用のアダプターを同梱しています。SDK の配布、スクリプトタグによる読み込みの選択肢、gRPC はロードマップに記載しています。
