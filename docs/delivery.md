@@ -4,13 +4,21 @@
 
 ## Browser and intake
 
-Pass a `createQueuedDelivery` instance as the collector's `queue` option. Give it the application profile, its hash, and a `createHttpDelivery(endpoint, { requireAcknowledgement: true })` sender. Grant consent through the collector before capture. A `queued` status means IndexedDB committed the envelope. HTTP 204 acknowledges durable receipt. The direct collector mode returns `sent` when its configured delivery resolves.
+Pass a `createQueuedDelivery` instance as the collector's `queue`. Give it the profile, its hash, and a `sendBatch` created with `createHttpBatchDelivery(endpoint)`. Grant consent through the collector before capture. A `queued` status means IndexedDB committed the envelope. Direct mode returns `sent` when its configured delivery resolves.
 
-The queue stores up to 64 events per origin, tenant and application. Eligible events expire after 24 hours, and the queue removes expired entries when it is active. A full queue rejects new events. The sender retries transient failures with the same envelope and event ID, honors bounded `Retry-After` delays, and drops definitive rejections. Tokens are obtained for each request and stay outside the queue. Retry resumes on consent, reconnect or a visibility change.
+The queue holds up to 512 records per origin, tenant and application. It reserves the last 64 places for records other than `result_impression` and `impression`, and prioritizes those records among items ready to send. At the applicable limit, it rejects new records. Entries expire after 24 hours and are removed when the queue is active. Transient failures retry with the same content and event ID and honor bounded `Retry-After` delays. Tokens are obtained per request and stay outside the queue. Retry resumes on consent, reconnect or a visibility change.
 
 Tabs share a consent generation, session and queue in IndexedDB. A withdrawal deletes the session and pending events in one transaction, changes the generation, and aborts active delivery in tabs that receive the notice. Late callbacks recheck the generation before updating storage. A request that already reached the collector service may have been accepted. Removal of received data is a server-side operation.
 
-The reference intake commits accepted events to SQLite before returning 204. Reposting the same envelope returns 204 and leaves one stored event. A different envelope with the same ID and tenant/application returns 409. Set `LIATRIS_DB` to choose the database path. By default the demo uses `liatris-demo.sqlite`. Establish retention and deletion policies and protect the database file before storing production data.
+A batch is a JSON array sent as `application/vnd.liatris.batch+json`. Each request is limited to 32 records and 128 KiB, and each record to 32 KiB. The response is HTTP 200 with exactly one receipt per submitted `event_id`.
+
+| Status | Queue behavior |
+| --- | --- |
+| `accepted` | Remove the record after the receiver confirms it was committed. |
+| `rejected` | Remove the record after a permanent failure. |
+| `retry` | Retain the record for retry after a transient failure. |
+
+Missing, duplicate or unusable receipts cause the whole batch to be retried. The reference intake commits accepted events to SQLite before acknowledging them. A replay of identical content within the tenant and application still leaves one stored event. Reusing its event ID with different content is a permanent failure. Single-record `application/json` remains supported with HTTP 204 for acceptance and HTTP 409 for conflicting content. Set `LIATRIS_DB` to choose the database path. By default the demo uses `liatris-demo.sqlite`. Establish retention and deletion policies and protect the database file before storing production data.
 
 ## Streaming destination contract
 
@@ -29,4 +37,4 @@ npm run test:kinesis
 
 The Compose test submits through the reference HTTP receiver, repeats delivery for one event ID, and checks the envelope after reading it back from Moto. The unit test verifies partial batch responses. Scope the AWS role to writing the selected stream, and validate the production IAM policy and service limits against AWS. [Kinesis IAM documentation](https://docs.aws.amazon.com/streams/latest/dev/controlling-access.html)
 
-For browser delivery tests, build the WASM with `mise run wasm`, install Chromium, Firefox and WebKit with `npx playwright install chromium firefox webkit`, and run `npm run test:browser`. The suite checks lost acknowledgements, storage across reloads and revocation from another tab.
+For browser delivery tests, build the WASM with `mise run wasm`, install Chromium, Firefox and WebKit with `npx playwright install chromium firefox webkit`, and run `npm run test:browser`. The suite checks lost acknowledgements, storage across reloads, revocation from another tab, priority under impression pressure, partial receipts and migration of the previous queue format.

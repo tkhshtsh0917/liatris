@@ -54,7 +54,7 @@ function closeWithStatus(response: ServerResponse, status: number) {
 	reply(response, status);
 }
 
-/** Receives one bounded JSON record and acknowledges it after the sink accepts it. */
+/** Validates bounded JSON requests and reports each event's outcome after storage. */
 export function createHttpReceiver(
 	profile: Profile,
 	profileHash: string,

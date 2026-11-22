@@ -14,7 +14,7 @@ mise run wasm
 mise exec -- npm run demo
 ```
 
-Open [the demo](http://127.0.0.1:4173/), enable collection, search for **garden tools**, then click **Garden spade**. In the browser's Network panel, inspect JSON requests to `/api/ubi`. The terminal shows accepted event names. The local demo serves both the page and the receiver on that loopback origin.
+Open [the demo](http://127.0.0.1:4173/), enable collection, search for **garden tools**, then click **Garden spade**. In the browser's Network panel, open requests to `/api/ubi` and inspect the records in the JSON array. The terminal shows accepted event names. The local demo serves both the page and the receiver on that loopback origin.
 
 | Check | Expected result |
 | --- | --- |
@@ -22,7 +22,7 @@ Open [the demo](http://127.0.0.1:4173/), enable collection, search for **garden 
 | Display | `results_shown` has the same `query_id`, plus `metadata.result_set`, `metadata.result_count: 2`, and `metadata.ranking_version`. |
 | Click | `click` has the same `query_id` and `metadata.result_set`. The displayed rank is `event_attributes.position.ordinal: 2` and the object ID is `event_attributes.object.object_id: "spade"`. |
 | Empty results | The **no results** search produces `results_shown` with `result_count: 0`. |
-| Receipt | For each saved event, the reference receiver returns HTTP 204. |
+| Receipt | The reference receiver returns HTTP 200 with an `accepted` receipt for each saved `event_id`. |
 
 The demo also sends an optional UBI Query record with synthetic search text. The three-event integration below collects no search text.
 
@@ -54,7 +54,7 @@ Use the compiled profile and hash from this build in the receiving application a
 Load this in your browser entry point or an ES module. Replace `obtainWriteToken` with the application function that obtains a scoped token for the collection API. Pass the state from your consent UI to `setMeasurementConsent` at initialization and when it changes. Wait for the update before starting collection.
 
 ```js
-import { createCollector, createHttpDelivery } from "/assets/liatris/collector.js";
+import { createCollector, createHttpBatchDelivery } from "/assets/liatris/collector.js";
 import { createQueuedDelivery } from "/assets/liatris/queued-delivery.js";
 import { createSearchMeasurement } from "/assets/liatris/search-measurement.js";
 
@@ -73,14 +73,13 @@ export async function createSearchTracking(obtainWriteToken) {
     asset("profile.sha256").then(response => response.text()),
   ]);
   const profileHash = hash.trim();
-  const send = createHttpDelivery(profile.endpoint, {
+  const sendBatch = createHttpBatchDelivery(profile.endpoint, {
     getAccessToken: obtainWriteToken,
-    requireAcknowledgement: true,
   });
   const collector = createCollector({
     profile,
     profileHash,
-    queue: createQueuedDelivery({ profile, profileHash, send }),
+    queue: createQueuedDelivery({ profile, profileHash, sendBatch }),
     loadWasm: async () => (await asset("session.wasm")).arrayBuffer(),
   });
   const search = createSearchMeasurement(collector);
@@ -125,4 +124,4 @@ if (display) {
 
 Host a POST route at the profile's `endpoint`, preferably on the application's HTTPS origin. For the Node.js reference implementation, mount `createHttpReceiver(profile, profileHash, store.accept, { audience, verifyBearer })` at that route with a store created by `openEventStore(path, profile)`. Load `profile` and `profileHash` from the two compiled files you served in step 2. Use `trim()` to strip the newline from the hash file. `verifyBearer` authenticates each token and returns the verified tenant, application, audience, `liatris:write` permission, and expiry. An existing receiver can implement the same HTTP contract. [Receiver entry point](../server/http.ts) · [Durable delivery](delivery.md) · [Authentication and production controls](security.md)
 
-Repeat the checks in step 1 against your own page, then withdraw consent and try another search. A working integration renders the results and produces no new collection POST after withdrawal. The immediate `queued` result shows local storage in the browser. The receiver's HTTP 204 confirms durable receipt.
+Repeat the checks in step 1 against your own page, then withdraw consent and try another search. A working integration renders the results and produces no new collection POST after withdrawal. The immediate `queued` result shows local storage in the browser. An `accepted` receipt in the response body confirms durable storage for that event.
