@@ -250,3 +250,43 @@ test("requires cleanup after the latest of two queued revocations fails", async 
 	await collector.setConsent(true);
 	assert.equal(cleared, 3);
 });
+
+test("sends a UTF-8 record at the exact limit without assigning a session to oversized events", async () => {
+	const metadata: Record<string, string> = { padding: "" };
+	for (let index = 0; index < 16; index++)
+		metadata[`field${index}`] = "é".repeat(1000);
+	const fields = Object.fromEntries(
+		Object.keys(metadata).map((key) => [
+			key,
+			{ type: "string" as const, maxLength: 1024 },
+		]),
+	);
+	const config = { ...profile, events: { saved: { fields } } };
+	const expected = {
+		event_id: "00000000-0000-4000-8000-000000000000",
+		profile_hash: sha256,
+		kind: "event",
+		payload: {
+			action_name: "saved",
+			application: profile.application,
+			timestamp: "2026-11-22T00:00:00.000Z",
+			session_id: "00000000-0000-4000-8000-000000000000",
+		},
+		metadata,
+	};
+	metadata.padding = "x".repeat(
+		32768 - Buffer.byteLength(JSON.stringify(expected)),
+	);
+	const { collector, opened } = fixture(async (record) => {
+		assert.equal(Buffer.byteLength(JSON.stringify(record)), 32768);
+	}, config);
+	await collector.setConsent(true);
+	await assert.rejects(
+		collector.trackEvent("saved", {
+			metadata: { ...metadata, padding: metadata.padding + "x" },
+		}),
+		/record too large/,
+	);
+	assert.equal(opened(), 0);
+	assert.equal(await collector.trackEvent("saved", { metadata }), "sent");
+});

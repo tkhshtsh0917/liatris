@@ -23,6 +23,19 @@ type Options = {
 	deliver: Delivery;
 };
 
+const placeholderId = "00000000-0000-4000-8000-000000000000";
+
+function setSessionId(record: Envelope, sessionId: string) {
+	if (record.kind === "query") {
+		record.payload.query_attributes = {
+			...(record.payload.query_attributes as Record<string, unknown>),
+			session_id: sessionId,
+		};
+	} else {
+		record.payload.session_id = sessionId;
+	}
+}
+
 type Session = Awaited<ReturnType<typeof createSessionManager>>;
 
 /** Captures explicitly declared events after the host grants consent. */
@@ -85,7 +98,7 @@ export function createCollector({
 	): Promise<Status> {
 		const now = Date.now();
 		const record: Envelope = {
-			event_id: "00000000-0000-4000-8000-000000000000",
+			event_id: placeholderId,
 			profile_hash: profileHash,
 			kind,
 			payload: {
@@ -98,10 +111,10 @@ export function createCollector({
 				: {}),
 		};
 
-		// Reserve enough bytes for the generated session ID and its enclosing fields.
+		// UUIDs serialize to the same number of bytes as the placeholders.
+		setSessionId(record, placeholderId);
 		if (
-			new TextEncoder().encode(JSON.stringify(record)).length >
-			maxRecordBytes - 100
+			new TextEncoder().encode(JSON.stringify(record)).length > maxRecordBytes
 		) {
 			throw new RangeError("record too large");
 		}
@@ -126,14 +139,7 @@ export function createCollector({
 		if (!assigned || signal.aborted) return "no-consent";
 
 		record.event_id = crypto.randomUUID();
-		if (kind === "query") {
-			record.payload.query_attributes = {
-				...(record.payload.query_attributes as Record<string, unknown>),
-				session_id: assigned.sessionId,
-			};
-		} else {
-			record.payload.session_id = assigned.sessionId;
-		}
+		setSessionId(record, assigned.sessionId);
 
 		try {
 			await deliver(record, signal);
