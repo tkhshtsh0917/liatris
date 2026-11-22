@@ -98,8 +98,15 @@ export function createCollector({
 			payload: Envelope["payload"];
 			metadata: NonNullable<Envelope["metadata"]>;
 		},
-		anchor?: Activity,
-		now = Date.now(),
+		{
+			anchor,
+			now = Date.now(),
+			onAssigned,
+		}: {
+			anchor?: Activity;
+			now?: number;
+			onAssigned?: (activity: Activity) => void;
+		} = {},
 	): Promise<Status> {
 		const record: Envelope = {
 			event_id: placeholderId,
@@ -147,6 +154,7 @@ export function createCollector({
 			}));
 		if (!assigned || signal.aborted) return "no-consent";
 
+		onAssigned?.(assigned);
 		record.event_id = crypto.randomUUID();
 		setSessionId(record, assigned.sessionId);
 
@@ -158,34 +166,77 @@ export function createCollector({
 		return signal.aborted ? "no-consent" : "sent";
 	}
 
+	function createObservation(
+		signal: AbortSignal,
+		anchor: Promise<Activity | undefined>,
+	) {
+		async function dispatch(
+			record: (activity: Activity, at: number) => Promise<Status> | Status,
+		): Promise<Status | "no-session"> {
+			const at = Date.now();
+			const activity = await anchor;
+			if (signal.aborted) return "no-consent";
+			if (!activity) return "no-session";
+			return record(activity, at);
+		}
+
+		return {
+			signal,
+			trackQuery(value: QueryInput) {
+				return dispatch((anchor, now) => {
+					if (!profile.allowQueryText) return "query-text-disabled";
+					const payload = readQuery(profile, value);
+					return capture(
+						signal,
+						"query",
+						{ payload, metadata: {} },
+						{ anchor, now },
+					);
+				});
+			},
+			trackEvent(name: string, value: EventInput = {}) {
+				return dispatch((anchor, now) => {
+					const data = readEvent(profile, name, value);
+					return capture(signal, "event", data, { anchor, now });
+				});
+			},
+			async sessionElapsedMs(at = Date.now()) {
+				const activity = await anchor;
+				if (!signal.aborted && activity)
+					return Math.max(0, at - activity.startedAtMs);
+			},
+		};
+	}
+
 	return {
 		setConsent,
 		/** Binds later observations to the most recent activity queued in this collector. */
 		bindObservation() {
 			const signal = consent?.signal;
-			if (!signal) return;
-			const anchor = sessionTail.then(() => lastActivity);
+			if (signal)
+				return createObservation(
+					signal,
+					sessionTail.then(() => lastActivity),
+				);
+		},
+		/** Records a live event and binds subsequent observations to that exact event's session. */
+		trackEventWithObservation(name: string, value: EventInput = {}) {
+			const signal = consent?.signal;
+			if (!signal) return { delivery: Promise.resolve<Status>("no-consent") };
 
-			return {
-				signal,
-				async trackEvent(
-					name: string,
-					value: EventInput = {},
-				): Promise<Status | "no-session"> {
-					const observedAt = Date.now();
-					const activity = await anchor;
-					if (signal.aborted) return "no-consent";
-					if (!activity) return "no-session";
-
+			const { promise, resolve } = Promise.withResolvers<
+				Activity | undefined
+			>();
+			const delivery = (async () => {
+				try {
 					const data = readEvent(profile, name, value);
-					return capture(signal, "event", data, activity, observedAt);
-				},
-				async sessionElapsedMs(at = Date.now()) {
-					const activity = await anchor;
-					if (!signal.aborted && activity)
-						return Math.max(0, at - activity.startedAtMs);
-				},
-			};
+					return await capture(signal, "event", data, { onAssigned: resolve });
+				} finally {
+					resolve(undefined);
+				}
+			})();
+
+			return { delivery, observation: createObservation(signal, promise) };
 		},
 		async trackQuery(value: QueryInput): Promise<Status> {
 			if (!consent) return "no-consent";

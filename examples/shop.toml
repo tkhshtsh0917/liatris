@@ -6,6 +6,27 @@ endpoint = "/api/ubi"
 schemaMode = "compat"
 allowQueryText = true
 
+[events.search_submitted]
+
+[events.results_shown.fields.result_set]
+type = "string"
+maxLength = 100
+required = true
+
+[events.results_shown.fields.result_count]
+type = "integer"
+minimum = 0
+required = true
+
+[events.results_shown.fields.ranking_version]
+type = "string"
+maxLength = 100
+required = true
+
+[events.click.fields.first_click_ms]
+type = "integer"
+minimum = 0
+
 [events.click.fields.result_set]
 type = "string"
 maxLength = 100

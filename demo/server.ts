@@ -46,6 +46,7 @@ for (const name of [
 	"http-delivery",
 	"profile",
 	"records",
+	"search-measurement",
 	"session",
 	"session-store",
 ]) {

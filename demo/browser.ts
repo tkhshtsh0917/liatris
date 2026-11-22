@@ -3,6 +3,10 @@ import { observeEngagement } from "../src/engagement.ts";
 import { observeResultImpressions } from "../src/impressions.ts";
 import type { Profile } from "../src/profile.ts";
 import type { EventInput } from "../src/records.ts";
+import {
+	createSearchMeasurement,
+	type DisplayedSearchResults,
+} from "../src/search-measurement.ts";
 import { openSessionStore } from "../src/session-store.ts";
 
 type Target = { id: string; title: string };
@@ -69,11 +73,11 @@ async function report(operation: Promise<string>) {
 	}
 }
 
-type Display = { queryId: string; resultSet: string };
+const searchMeasurement = createSearchMeasurement(collector);
 let impressions: ReturnType<typeof observeResultImpressions> | undefined;
 
 function resultEvent(
-	display: Display,
+	display: DisplayedSearchResults,
 	target: Target,
 	ordinal: number,
 ): EventInput {
@@ -88,7 +92,7 @@ function resultEvent(
 }
 
 function openDetail(
-	display: Display | undefined,
+	display: DisplayedSearchResults | undefined,
 	target: Target,
 	ordinal: number,
 ) {
@@ -101,9 +105,18 @@ function openDetail(
 	const detailId = crypto.randomUUID();
 	const event = resultEvent(display, target, ordinal);
 	const metadata = { ...event.metadata, detail_view_id: detailId };
-	void report(collector.trackEvent("click", { ...event, metadata }));
-
-	const observation = collector.bindObservation();
+	const firstClickMs = display.firstClickDelay();
+	const { delivery, observation } = collector.trackEventWithObservation(
+		"click",
+		{
+			...event,
+			metadata:
+				firstClickMs === undefined
+					? metadata
+					: { ...metadata, first_click_ms: firstClickMs },
+		},
+	);
+	void report(delivery);
 	if (!observation) return;
 
 	engagement = observeEngagement({
@@ -130,7 +143,10 @@ function openDetail(
 	});
 }
 
-function showResults(display: Display | undefined, hits: Target[]) {
+function showResults(
+	display: DisplayedSearchResults | undefined,
+	hits: Target[],
+) {
 	impressions?.close();
 	impressions =
 		display && hits.length
@@ -162,6 +178,7 @@ function showResults(display: Display | undefined, hits: Target[]) {
 }
 
 consent.addEventListener("change", () => {
+	searchMeasurement.clear();
 	closeDetail(false);
 	showResults(undefined, []);
 	summary.textContent = "";
@@ -178,17 +195,25 @@ form.addEventListener("submit", (event) => {
 	event.preventDefault();
 	closeDetail(true);
 
-	const queryId = consent.checked ? crypto.randomUUID() : undefined;
 	const term = searchTerm.value;
 	const hits = catalog[term] ?? [];
-	showResults(
-		queryId === undefined
-			? undefined
-			: { queryId, resultSet: crypto.randomUUID() },
-		hits,
-	);
-	summary.textContent = `${hits.length} result(s)`;
-	if (queryId !== undefined) {
-		void report(collector.trackQuery({ query_id: queryId, user_query: term }));
+	const draw = (display?: DisplayedSearchResults) => {
+		showResults(display, hits);
+		summary.textContent = `${hits.length} result(s)`;
+	};
+	if (!consent.checked) {
+		searchMeasurement.clear();
+		draw();
+		return;
 	}
+
+	const search = searchMeasurement.beginSearch(crypto.randomUUID());
+	void report(search.submitted);
+	const query = search.trackQueryText(term);
+	if (query) void report(query);
+	const rendered = search.render(
+		{ resultCount: hits.length, rankingVersion: "sample-v1" },
+		draw,
+	);
+	if (rendered) void report(rendered);
 });

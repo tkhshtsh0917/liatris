@@ -6,10 +6,17 @@ endpoint: /api/ubi
 schemaMode: compat
 allowQueryText: true
 events:
+  search_submitted: {}
+  results_shown:
+    fields:
+      result_set: { type: string, maxLength: 100, required: true }
+      result_count: { type: integer, minimum: 0, required: true }
+      ranking_version: { type: string, maxLength: 100, required: true }
   click:
     fields:
       result_set: { type: string, maxLength: 100, required: true }
       detail_view_id: { type: string, maxLength: 100 }
+      first_click_ms: { type: integer, minimum: 0 }
   result_impression:
     fields:
       result_set: { type: string, maxLength: 100, required: true }
