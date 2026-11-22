@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": ".",
+    "outDir": "./dist/demo",
+    "rewriteRelativeImportExtensions": true
+  },
+  "include": ["demo/browser.ts", "src/**/*.ts"]
+}

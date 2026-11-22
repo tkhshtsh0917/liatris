@@ -1,0 +1,24 @@
+{
+  "name": "liatris",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.ts",
+    "profile": "node tools/compile-profile.ts",
+    "lint": "biome check src tests tools server demo schema/profile.schema.json",
+    "format": "biome format --write src tests tools server demo schema/profile.schema.json",
+    "demo:build": "tsc -p tsconfig.demo.json",
+    "demo": "npm run demo:build && node demo/server.ts"
+  },
+  "dependencies": {
+    "@decimalturn/toml-patch": "3.3.3",
+    "ajv": "8.20.0",
+    "yaml": "2.9.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.2",
+    "@types/node": "24.19.2",
+    "typescript": "7.0.2"
+  }
+}

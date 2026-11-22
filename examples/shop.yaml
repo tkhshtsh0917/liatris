@@ -1,0 +1,19 @@
+version: 1
+ubiSchema: "1.3.0"
+tenant: sample
+application: storefront
+endpoint: /api/ubi
+schemaMode: compat
+allowQueryText: true
+events:
+  click:
+    fields:
+      result_set: { type: string, maxLength: 100, required: true }
+  add_cart: {}
+extensions:
+  query_attributes:
+    experiment_id: { type: string, maxLength: 64 }
+  event_attributes:
+    surface: { type: string, maxLength: 32 }
+  event_attributes.object:
+    is_sponsored: { type: boolean }

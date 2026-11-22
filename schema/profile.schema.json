@@ -1,0 +1,169 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"title": "Liatris collection profile 1",
+	"type": "object",
+	"additionalProperties": false,
+	"required": [
+		"version",
+		"ubiSchema",
+		"tenant",
+		"application",
+		"endpoint",
+		"events"
+	],
+	"properties": {
+		"version": {
+			"const": 1
+		},
+		"ubiSchema": {
+			"const": "1.3.0"
+		},
+		"tenant": {
+			"$ref": "#/$defs/scope"
+		},
+		"application": {
+			"$ref": "#/$defs/scope"
+		},
+		"endpoint": {
+			"type": "string",
+			"minLength": 1,
+			"maxLength": 2048
+		},
+		"session": {
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"inactivityMinutes": {
+					"type": "integer",
+					"minimum": 1,
+					"maximum": 1440
+				}
+			}
+		},
+		"extensions": {
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"query_attributes": {
+					"$ref": "#/$defs/fields",
+					"propertyNames": {
+						"not": {
+							"enum": ["session_id"]
+						}
+					},
+					"type": "object"
+				},
+				"event_attributes": {
+					"$ref": "#/$defs/fields",
+					"propertyNames": {
+						"not": {
+							"enum": ["position", "object", "session_number"]
+						}
+					},
+					"type": "object"
+				},
+				"event_attributes.object": {
+					"$ref": "#/$defs/fields",
+					"propertyNames": {
+						"not": {
+							"enum": [
+								"object_id",
+								"object_id_type",
+								"object_id_field",
+								"internal_id"
+							]
+						}
+					},
+					"type": "object"
+				},
+				"event_attributes.position": {
+					"$ref": "#/$defs/fields",
+					"propertyNames": {
+						"not": {
+							"enum": ["ordinal", "xy"]
+						}
+					},
+					"type": "object"
+				}
+			}
+		},
+		"schemaMode": {
+			"enum": ["strict", "compat"]
+		},
+		"allowQueryText": {
+			"type": "boolean"
+		},
+		"events": {
+			"type": "object",
+			"minProperties": 1,
+			"maxProperties": 32,
+			"propertyNames": {
+				"pattern": "^[a-z][a-z0-9_]{0,63}$",
+				"not": {
+					"enum": ["constructor", "prototype"]
+				}
+			},
+			"additionalProperties": {
+				"type": "object",
+				"additionalProperties": false,
+				"properties": {
+					"fields": {
+						"$ref": "#/$defs/fields"
+					}
+				}
+			}
+		}
+	},
+	"$defs": {
+		"scope": {
+			"type": "string",
+			"pattern": "^[a-z0-9][a-z0-9._-]{0,99}$"
+		},
+		"fields": {
+			"type": "object",
+			"maxProperties": 24,
+			"propertyNames": {
+				"pattern": "^[a-z][a-z0-9_]{0,63}$",
+				"not": {
+					"enum": ["constructor", "prototype"]
+				}
+			},
+			"additionalProperties": {
+				"$ref": "#/$defs/field"
+			}
+		},
+		"field": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["type"],
+			"properties": {
+				"type": {
+					"enum": ["string", "integer", "number", "boolean"]
+				},
+				"maxLength": {
+					"type": "integer",
+					"minimum": 1,
+					"maximum": 1024
+				},
+				"required": {
+					"type": "boolean"
+				}
+			},
+			"if": {
+				"properties": {
+					"type": {
+						"const": "string"
+					}
+				}
+			},
+			"then": {
+				"required": ["maxLength"]
+			},
+			"else": {
+				"not": {
+					"required": ["maxLength"]
+				}
+			}
+		}
+	}
+}

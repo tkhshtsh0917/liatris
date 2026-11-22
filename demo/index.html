@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Liatris collector demo</title>
+  </head>
+  <body>
+    <main>
+      <h1>Liatris collector demo</h1>
+      <p>Search the sample catalog and click a result. Accepted records appear in the terminal running the demo.</p>
+      <label><input type="checkbox" id="consent" autocomplete="off"> Allow collection in this tab</label>
+      <form id="search">
+        <label for="term">Sample query</label>
+        <select id="term">
+          <option>garden tools</option>
+          <option>no results</option>
+        </select>
+        <button type="submit">Search</button>
+      </form>
+      <p id="summary" role="status"></p>
+      <ul id="results"></ul>
+      <p id="status" role="status">Collection disabled.</p>
+    </main>
+    <script type="module" src="/assets/demo/browser.js"></script>
+  </body>
+</html>
