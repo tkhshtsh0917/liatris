@@ -28,6 +28,24 @@ type Options = {
 );
 
 type Lease = { generation: string; controller: AbortController };
+/** Identifies one queued withdrawal for a later retry in the same collection scope. */
+export type WithdrawalRetry = Readonly<{
+	scope: string;
+	generation: string | null;
+	marker: string;
+}>;
+
+/** A failed queued withdrawal with a serializable retry target, when known. */
+export class ConsentWithdrawalError extends Error {
+	readonly retry?: WithdrawalRetry;
+
+	constructor(cause: unknown, retry?: WithdrawalRetry) {
+		super("Could not complete withdrawal", { cause });
+		this.name = "ConsentWithdrawalError";
+		this.retry = retry;
+	}
+}
+
 type PendingWrite = {
 	record: Envelope;
 	signal: AbortSignal;
@@ -57,9 +75,10 @@ export function createQueuedDelivery({
 	let database: Promise<IDBDatabase> | undefined;
 	let channel: BroadcastChannel | undefined;
 	let active: Lease | undefined;
+	let grantNotices: Set<string> | undefined;
+	let granting: Promise<AbortSignal> | undefined;
 	let withdrawnGeneration: string | undefined;
-	let withdrawalTarget: { generation: string | undefined } | undefined;
-	let pendingWithdrawal: string | undefined;
+	let failedWithdrawal: WithdrawalRetry | undefined;
 	let writeGroup: { lease: Lease; writes: PendingWrite[] } | undefined;
 	const encoder = new TextEncoder();
 	let coalesce: ReturnType<typeof setTimeout> | undefined;
@@ -76,13 +95,15 @@ export function createQueuedDelivery({
 	}
 
 	function stop() {
-		active?.controller.abort();
+		const lease = active;
 		active = undefined;
 		clearTimeout(retry);
 		clearTimeout(coalesce);
 		coalesce = undefined;
 		window.removeEventListener("online", wake);
 		document.removeEventListener("visibilitychange", wake);
+		lease?.controller.abort();
+		return lease?.generation;
 	}
 
 	function notify(reason: DropReason) {
@@ -348,15 +369,107 @@ export function createQueuedDelivery({
 		channel.onmessage = (
 			message: MessageEvent<{ scope?: string; generation?: string }>,
 		) => {
-			if (
-				active &&
-				message.data?.scope === scope &&
-				message.data.generation === active.generation
-			) {
-				withdrawnGeneration = active.generation;
+			const notice = message.data;
+			if (notice?.scope !== scope || typeof notice.generation !== "string")
+				return;
+
+			grantNotices?.add(notice.generation);
+			if (active?.generation === notice.generation) {
+				withdrawnGeneration = notice.generation;
 				stop();
 			}
 		};
+	}
+
+	async function openGrant() {
+		watchRevocation();
+		const notices = new Set<string>();
+		grantNotices = notices;
+		const db = await open();
+		const state = await updateOutbox(db, scope, async (state, outbox) => {
+			// An explicit new grant may complete a withdrawal this tab already saw.
+			if (
+				state &&
+				!state.cleanupPending &&
+				state.generation !== withdrawnGeneration
+			)
+				return state;
+			if (state) await outbox.removeAll();
+
+			const created = { generation: crypto.randomUUID() };
+			outbox.setConsent(created);
+			return created;
+		});
+		const isCurrent = await updateOutbox(
+			db,
+			scope,
+			(current) =>
+				current?.generation === state.generation && !current.cleanupPending,
+		);
+		if (!isCurrent || notices.has(state.generation)) {
+			if (notices.has(state.generation)) withdrawnGeneration = state.generation;
+			throw new Error("collection consent was withdrawn during setup");
+		}
+
+		withdrawnGeneration = undefined;
+		active = {
+			generation: state.generation,
+			controller: new AbortController(),
+		};
+		return active.controller.signal;
+	}
+
+	function announceWithdrawal(generation: string) {
+		channel?.postMessage({ scope, generation });
+	}
+
+	async function withdraw(fallback?: string, retry?: WithdrawalRetry) {
+		watchRevocation();
+		let target = retry ?? failedWithdrawal;
+		try {
+			const db = await open();
+			const marker = await updateOutbox(db, scope, (state, outbox) => {
+				if (target) {
+					if (state?.generation === target.marker)
+						return state.cleanupPending ? target.marker : undefined;
+					if ((state?.generation ?? null) !== target.generation) return;
+				} else {
+					target = {
+						scope,
+						generation: state?.generation ?? null,
+						marker: state?.cleanupPending
+							? state.generation
+							: crypto.randomUUID(),
+					};
+				}
+				if (state?.cleanupPending) return state.generation;
+
+				// Notify before the write so a failed transaction still stops peers.
+				if (state) announceWithdrawal(state.generation);
+				outbox.setConsent({ generation: target.marker, cleanupPending: true });
+				return target.marker;
+			});
+			if (marker !== undefined) {
+				await updateOutbox(db, scope, async (state, outbox) => {
+					if (!state?.cleanupPending || state.generation !== marker) return;
+
+					await outbox.removeAll();
+					outbox.setConsent({ generation: marker });
+				});
+			}
+		} catch (error) {
+			if (!target && fallback) {
+				// The storage failure happened before the transaction could read the grant.
+				target = { scope, generation: fallback, marker: crypto.randomUUID() };
+				announceWithdrawal(fallback);
+			}
+			failedWithdrawal = target;
+			throw new ConsentWithdrawalError(
+				error,
+				target && Object.freeze({ ...target }),
+			);
+		}
+		failedWithdrawal = undefined;
 	}
 
 	return {
@@ -372,82 +485,34 @@ export function createQueuedDelivery({
 		/** Opens this tab's consent lease before delivery starts. */
 		async grant() {
 			if (active) return active.controller.signal;
-			watchRevocation();
-			const state = await updateOutbox(
-				await open(),
-				scope,
-				async (state, outbox) => {
-					if (state) {
-						if (
-							!state.cleanupPending &&
-							state.generation !== withdrawnGeneration
-						)
-							return state;
-
-						// The notice can arrive even if IndexedDB still has the old grant.
-						await outbox.removeAll();
-					}
-
-					const created = { generation: crypto.randomUUID() };
-					outbox.setConsent(created);
-					return created;
-				},
-			);
-			active = {
-				generation: state.generation,
-				controller: new AbortController(),
-			};
-			// Check persisted consent after registering for notifications.
-			await updateOutbox(await open(), scope, (current) => {
-				if (active && current?.generation !== active.generation) stop();
+			granting ??= openGrant().finally(() => {
+				grantNotices = undefined;
+				granting = undefined;
 			});
-			if (!active)
-				throw new Error("collection consent was withdrawn during setup");
-			withdrawnGeneration = undefined;
-			return active.controller.signal;
+			return granting;
 		},
 
 		/** Aborts this tab and deletes session and queued data for every tab in the scope. */
-		async revoke() {
-			stop();
-			watchRevocation();
-			const db = await open();
-			if (pendingWithdrawal === undefined) {
-				// Commit the new generation before deletion so a failed purge cannot
-				// make the previous session and its events eligible for replay.
-				const withdrawal = await updateOutbox(db, scope, (state, outbox) => {
-					// A retry after a failed write still targets the original grant.
-					if (
-						withdrawalTarget &&
-						withdrawalTarget.generation !== state?.generation
-					)
-						return;
-					if (state?.cleanupPending) return state.generation;
+		revoke(previousGeneration?: string) {
+			const generation = stop() ?? previousGeneration;
+			return withdraw(generation);
+		},
 
-					withdrawalTarget = { generation: state?.generation };
-					// Stop other tabs even if the following IndexedDB write fails.
-					if (state)
-						channel?.postMessage({ scope, generation: state.generation });
+		/** Resumes an earlier withdrawal without changing a newer generation. */
+		retryWithdrawal(retry: WithdrawalRetry) {
+			if (
+				retry?.scope !== scope ||
+				(retry.generation !== null && typeof retry.generation !== "string") ||
+				typeof retry.marker !== "string"
+			)
+				throw new TypeError(
+					"invalid withdrawal retry for this collection scope",
+				);
 
-					const generation = crypto.randomUUID();
-					outbox.setConsent({ generation, cleanupPending: true });
-					return generation;
-				});
-				pendingWithdrawal = withdrawal;
-			}
+			if (failedWithdrawal && failedWithdrawal.marker !== retry.marker)
+				throw new Error("another withdrawal must be completed first");
 
-			const generation = pendingWithdrawal;
-			if (generation !== undefined) {
-				await updateOutbox(db, scope, async (state, outbox) => {
-					// Another tab may already have cleaned up before enabling collection.
-					if (!state?.cleanupPending || state.generation !== generation) return;
-
-					await outbox.removeAll();
-					outbox.setConsent({ generation });
-				});
-			}
-			pendingWithdrawal = undefined;
-			withdrawalTarget = undefined;
+			return withdraw(undefined, { ...retry });
 		},
 
 		/** Shares the session transaction with the same persisted consent generation. */

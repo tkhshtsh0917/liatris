@@ -1,6 +1,6 @@
 import { maxBatchEvents } from "./batch.ts";
 import type { Profile } from "./profile.ts";
-import type { QueuedDelivery } from "./queued-delivery.ts";
+import type { QueuedDelivery, WithdrawalRetry } from "./queued-delivery.ts";
 import {
 	type Envelope,
 	type EventInput,
@@ -16,6 +16,10 @@ export {
 	createHttpBatchDelivery,
 	createHttpDelivery,
 } from "./http-delivery.ts";
+export {
+	ConsentWithdrawalError,
+	type WithdrawalRetry,
+} from "./queued-delivery.ts";
 
 export type Delivery = (record: Envelope, signal: AbortSignal) => Promise<void>;
 type Status = "sent" | "queued" | "no-consent" | "query-text-disabled";
@@ -129,46 +133,52 @@ export function createCollector({
 
 	/** Grants capture for this collector or withdraws consent and clears persisted state. */
 	async function setConsent(granted: boolean) {
+		if (!granted) return withdrawConsent();
+
 		const version = ++consentVersion;
-		if (granted) {
-			await sessionTail;
-			if (version !== consentVersion) return;
-			if (cleanupRequired)
-				throw new Error(
-					"session cleanup must complete before collection resumes",
-				);
-			if (consent) return;
-			const controller = new AbortController();
-			if (queue) {
-				const signal = await withinSession(() => queue.grant());
-				if (version !== consentVersion || signal.aborted) return;
-				signal.addEventListener(
-					"abort",
-					() => {
-						if (consent === controller) {
-							consent = undefined;
-							latestAssignment = undefined;
-							session = undefined;
-							controller.abort();
-						}
-					},
-					{ once: true },
-				);
-			}
-			consent = controller;
-			queue?.resume();
-			return;
+		await sessionTail;
+		if (version !== consentVersion) return;
+		if (cleanupRequired)
+			throw new Error(
+				"session cleanup must complete before collection resumes",
+			);
+		if (consent) return;
+
+		const controller = new AbortController();
+		if (queue) {
+			const signal = await withinSession(() => queue.grant());
+			if (version !== consentVersion || signal.aborted) return;
+			signal.addEventListener(
+				"abort",
+				() => {
+					if (consent === controller) {
+						consent = undefined;
+						latestAssignment = undefined;
+						session = undefined;
+						controller.abort();
+					}
+				},
+				{ once: true },
+			);
 		}
+		consent = controller;
+		queue?.resume();
+	}
+
+	async function withdrawConsent(retry?: WithdrawalRetry) {
+		++consentVersion;
 
 		const previous = consent;
 		consent = undefined;
-		queue?.suspend();
+		const previousGeneration = queue?.suspend();
 		latestAssignment = undefined;
 		cleanupRequired = true;
 		const cleanup = withinSession(async () => {
 			cleanupRequired = true;
-			if (queue) await queue.revoke();
-			else {
+			if (queue) {
+				if (retry) await queue.retryWithdrawal(retry);
+				else await queue.revoke(previousGeneration);
+			} else {
 				store ??= await initializeStore();
 				await clearSession(store, profile);
 			}
@@ -283,6 +293,16 @@ export function createCollector({
 
 	return {
 		setConsent,
+		/** Retries a queued withdrawal before enabling capture, including after reload. */
+		async retryConsentWithdrawal(retry: WithdrawalRetry) {
+			if (!queue || consent)
+				throw new Error(
+					"withdrawal retry requires an inactive queued collector",
+				);
+			if (!retry) throw new TypeError("a withdrawal retry target is required");
+
+			await withdrawConsent(retry);
+		},
 		/** The active grant's signal, aborted on local or shared revocation. */
 		get consentSignal(): AbortSignal | undefined {
 			return consent?.signal;

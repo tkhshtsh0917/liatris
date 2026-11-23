@@ -65,11 +65,133 @@ function pendingRecords(page: Page) {
 	});
 }
 
+async function failWithdrawalRead(page: Page) {
+	await page.evaluate(() => {
+		const get = IDBObjectStore.prototype.get;
+		IDBObjectStore.prototype.get = function (key) {
+			if (this.name === "scopes") {
+				IDBObjectStore.prototype.get = get;
+				throw new DOMException("simulated scope read failure", "UnknownError");
+			}
+			return get.call(this, key);
+		};
+	});
+}
+
+/** Holds the grant's first completion callback after its real transaction commits. */
+async function holdGrantCompletion(page: Page) {
+	await page.evaluate(() => {
+		const transaction = IDBDatabase.prototype.transaction;
+		const complete = Object.getOwnPropertyDescriptor(
+			IDBTransaction.prototype,
+			"oncomplete",
+		);
+		if (!complete?.set)
+			throw new Error("IndexedDB completion handler is unavailable");
+
+		const hold = Promise.withResolvers<() => void>();
+		Object.assign(window, { heldGrant: hold.promise });
+		IDBDatabase.prototype.transaction = function (...args) {
+			const tx = transaction.apply(this, args);
+			if (this.name !== "liatris-delivery") return tx;
+
+			IDBDatabase.prototype.transaction = transaction;
+			Object.defineProperty(tx, "oncomplete", {
+				set(listener: (event: Event) => void) {
+					complete.set?.call(tx, (event: Event) => {
+						hold.resolve(() => listener.call(tx, event));
+					});
+				},
+			});
+			return tx;
+		};
+		const notified = Promise.withResolvers<void>();
+		Object.assign(window, { withdrawalNotified: notified.promise });
+		const channel = new BroadcastChannel("liatris-consent");
+		channel.onmessage = () => {
+			channel.close();
+			setTimeout(notified.resolve, 0);
+		};
+	});
+}
+
+function registerWithdrawalDuringGrantTest(
+	origin: string,
+	engine: typeof chromium,
+) {
+	test(`${engine.name()} stops active and initializing peers when withdrawal cannot read IndexedDB`, {
+		timeout: 30_000,
+	}, async () => {
+		const browser = await engine.launch();
+		try {
+			const context = await browser.newContext();
+			const first = await context.newPage();
+			const peer = await context.newPage();
+			const starting = await context.newPage();
+			await openSearch(first, origin);
+			const peerSearch = await openSearch(peer, origin);
+			await starting.goto(origin);
+			await holdGrantCompletion(starting);
+			await starting.getByRole("checkbox").click();
+			await starting.evaluate(async () => {
+				const { heldGrant } = window as Window & {
+					heldGrant?: Promise<() => void>;
+				};
+				if (!heldGrant) throw new Error("grant gate is unavailable");
+				await heldGrant;
+			});
+
+			await context.route("**/api/ubi", (route) =>
+				route.fulfill({ status: 503, headers: { "retry-after": "60" } }),
+			);
+			const sentOffline = peer.waitForResponse(
+				(response) =>
+					response.status() === 503 && !!submission(response.request()),
+			);
+			await peerSearch.click();
+			const old = submission((await sentOffline).request());
+			assert.ok(old);
+
+			await failWithdrawalRead(first);
+			await first.getByRole("checkbox").uncheck();
+			await first.getByText("Could not complete withdrawal.").waitFor();
+			await peer.getByText("Collection disabled.", { exact: true }).waitFor();
+			await starting.evaluate(async () => {
+				const page = window as Window & {
+					heldGrant?: Promise<() => void>;
+					withdrawalNotified?: Promise<void>;
+				};
+				if (!page.heldGrant || !page.withdrawalNotified)
+					throw new Error(
+						"grant gate or withdrawal notification is unavailable",
+					);
+				await page.withdrawalNotified;
+				(await page.heldGrant)();
+			});
+			await starting.getByText("Could not enable collection.").waitFor();
+			assert.equal(await starting.getByRole("checkbox").isChecked(), false);
+			assert.ok(
+				(await pendingRecords(peer)).some(
+					({ record }) => record.event_id === old.event_id,
+				),
+			);
+
+			await first.reload();
+			await first.locator("#consent:enabled:not([aria-disabled])").waitFor();
+			assert.deepEqual(await pendingRecords(peer), []);
+			await peerSearch.click();
+			await peer.getByText("no-consent", { exact: true }).waitFor();
+		} finally {
+			await browser.close();
+		}
+	});
+}
+
 function registerWithdrawalRecoveryTest(
 	origin: string,
 	engine: typeof chromium,
 ) {
-	test(`${engine.name()} blocks replay after failed withdrawal and preserves a newer grant on retry`, {
+	test(`${engine.name()} blocks replay after failed withdrawal and preserves a newer grant on reload and retry`, {
 		timeout: 30_000,
 	}, async () => {
 		const browser = await engine.launch();
@@ -141,26 +263,41 @@ function registerWithdrawalRecoveryTest(
 			await peer.getByText("Collection enabled.", { exact: true }).waitFor();
 			assert.deepEqual(await pendingRecords(peer), []);
 
-			// The original page can finish its retry even while its deletion path
-			// is unavailable, because the peer has already removed the old queue.
-			const retry = first.getByRole("button", { name: "Retry withdrawal" });
-			await retry.focus();
-			await first.keyboard.press("Space");
-			await first.getByText("Collection disabled.", { exact: true }).waitFor();
-			assert.equal(
-				await consent.evaluate((box) => document.activeElement === box),
-				true,
+			// Keep a new event pending while the original page reloads and retries
+			// the saved withdrawal. Its retry must leave the new queue alone.
+			offline = true;
+			const queuedAfterRegrant = peer.waitForResponse(
+				(response) =>
+					response.status() === 503 && !!submission(response.request()),
 			);
-			assert.equal(await retry.isVisible(), false);
+			await search.click();
+			const queued = submission((await queuedAfterRegrant).request());
+			assert.ok(queued);
+			await first.reload();
+			await first.locator("#consent:enabled:not([aria-disabled])").waitFor();
+			await first.getByText("Collection disabled.", { exact: true }).waitFor();
+			assert.ok(
+				(await pendingRecords(peer)).some(
+					({ record }) => record.event_id === queued.event_id,
+				),
+			);
+			await peer.getByText("Collection enabled.", { exact: true }).waitFor();
+			offline = false;
 
 			const accepted = peer.waitForResponse(
 				(response) =>
-					response.status() === 200 && !!submission(response.request()),
+					response.status() === 200 &&
+					postedEvents(response.request()).some(
+						(event) => event.event_id === queued.event_id,
+					),
 			);
+			await peer.evaluate(() => {
+				const now = Date.now;
+				Date.now = () => now() + 120_000;
+			});
 			await search.click();
-			const fresh = submission((await accepted).request());
-			assert.ok(fresh);
-			assert.notEqual(fresh.payload.session_id, old.payload.session_id);
+			await accepted;
+			assert.notEqual(queued.payload.session_id, old.payload.session_id);
 			assert.ok(
 				delivered.every(
 					(event) => event.payload.query_id !== old.payload.query_id,
@@ -240,8 +377,14 @@ function registerWithdrawalWriteFailureTest(
 			};
 			if (regrantBeforeRetry) await regrant();
 
-			await first.getByRole("button", { name: "Retry withdrawal" }).click();
+			const retry = first.getByRole("button", { name: "Retry withdrawal" });
+			await retry.focus();
+			await first.keyboard.press("Space");
 			await first.getByText("Collection disabled.", { exact: true }).waitFor();
+			assert.equal(
+				await consent.evaluate((box) => document.activeElement === box),
+				true,
+			);
 			assert.deepEqual(await pendingRecords(peer), []);
 
 			if (!regrantBeforeRetry) await regrant();
@@ -267,6 +410,7 @@ function registerWithdrawalWriteFailureTest(
 
 export function registerWithdrawalTests(origin: string) {
 	for (const engine of [chromium, firefox, webkit]) {
+		registerWithdrawalDuringGrantTest(origin, engine);
 		registerWithdrawalRecoveryTest(origin, engine);
 		registerWithdrawalWriteFailureTest(origin, engine, false);
 		registerWithdrawalWriteFailureTest(origin, engine, true);

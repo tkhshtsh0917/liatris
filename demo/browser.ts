@@ -1,4 +1,9 @@
-import { createCollector, createHttpBatchDelivery } from "../src/collector.ts";
+import {
+	ConsentWithdrawalError,
+	createCollector,
+	createHttpBatchDelivery,
+	type WithdrawalRetry,
+} from "../src/collector.ts";
 import { observeEngagement } from "../src/engagement.ts";
 import { observeResultImpressions } from "../src/impressions.ts";
 import type { Profile } from "../src/profile.ts";
@@ -196,6 +201,28 @@ function showConsent(message?: string) {
 }
 
 let updatingConsent = false;
+const retryKey = JSON.stringify([
+	"liatris-demo-withdrawal",
+	profile.tenant,
+	profile.application,
+]);
+let savedWithdrawal: WithdrawalRetry | undefined;
+try {
+	const stored = sessionStorage.getItem(retryKey);
+	if (stored) savedWithdrawal = JSON.parse(stored) as WithdrawalRetry;
+} catch {
+	// In-page retries also work when sessionStorage is unavailable.
+}
+
+function rememberWithdrawal(retry?: WithdrawalRetry) {
+	savedWithdrawal = retry;
+	try {
+		if (retry) sessionStorage.setItem(retryKey, JSON.stringify(retry));
+		else sessionStorage.removeItem(retryKey);
+	} catch {
+		// Retain the in-page retry target.
+	}
+}
 
 /** Applies an explicit choice and keeps failed withdrawals available for retry. */
 async function updateConsent(granted: boolean) {
@@ -204,7 +231,11 @@ async function updateConsent(granted: boolean) {
 	retryWithdrawal.setAttribute("aria-disabled", "true");
 
 	try {
-		await collector.setConsent(granted);
+		if (!granted && savedWithdrawal)
+			await collector.retryConsentWithdrawal(savedWithdrawal);
+		else await collector.setConsent(granted);
+
+		if (!granted) rememberWithdrawal();
 		collector.consentSignal?.addEventListener(
 			"abort",
 			() => {
@@ -216,7 +247,9 @@ async function updateConsent(granted: boolean) {
 		if (document.activeElement === retryWithdrawal) consent.focus();
 		retryWithdrawal.hidden = true;
 		showConsent();
-	} catch {
+	} catch (error) {
+		if (error instanceof ConsentWithdrawalError && error.retry)
+			rememberWithdrawal(error.retry);
 		retryWithdrawal.hidden = granted;
 		showConsent(
 			granted
@@ -240,6 +273,7 @@ retryWithdrawal.addEventListener("click", () => {
 	if (!updatingConsent) void updateConsent(false);
 });
 consent.disabled = false;
+if (savedWithdrawal) void updateConsent(false);
 
 form.addEventListener("submit", (event) => {
 	event.preventDefault();

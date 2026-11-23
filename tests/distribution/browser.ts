@@ -226,8 +226,11 @@ test("an independent site captures a search using only the extracted SDK", {
 
 		await page.getByText("Collection disabled.", { exact: true }).waitFor();
 		assert.equal(await consent.isChecked(), false);
-		await peer.getByRole("button", { name: "Retry withdrawal" }).click();
+		assert.equal(await peer.evaluate(() => sessionStorage.length), 1);
+		await peer.reload();
+		await peer.locator("#consent:enabled:not([aria-disabled])").waitFor();
 		await peer.getByText("Collection disabled.", { exact: true }).waitFor();
+		assert.equal(await peer.evaluate(() => sessionStorage.length), 0);
 
 		await consent.check();
 		await page.getByText("Collection enabled.", { exact: true }).waitFor();

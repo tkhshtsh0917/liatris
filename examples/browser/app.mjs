@@ -1,4 +1,5 @@
 import {
+	ConsentWithdrawalError,
 	createCollector,
 	createHttpBatchDelivery,
 } from "/assets/liatris/collector.js";
@@ -61,6 +62,30 @@ const showConsent = (message) => {
 };
 
 let updatingConsent = false;
+const retryKey = JSON.stringify([
+	"liatris-example-withdrawal",
+	profile.tenant,
+	profile.application,
+]);
+/** @type {import("/assets/liatris/collector.js").WithdrawalRetry | undefined} */
+let savedWithdrawal;
+try {
+	const stored = sessionStorage.getItem(retryKey);
+	if (stored) savedWithdrawal = JSON.parse(stored);
+} catch {
+	// In-page retries also work when sessionStorage is unavailable.
+}
+
+/** @param {import("/assets/liatris/collector.js").WithdrawalRetry} [retry] */
+function rememberWithdrawal(retry) {
+	savedWithdrawal = retry;
+	try {
+		if (retry) sessionStorage.setItem(retryKey, JSON.stringify(retry));
+		else sessionStorage.removeItem(retryKey);
+	} catch {
+		// Retain the in-page retry target.
+	}
+}
 
 /** Applies an explicit choice and keeps failed withdrawals available for retry.
  * @param {boolean} granted
@@ -71,7 +96,11 @@ const updateConsent = async (granted) => {
 	retryWithdrawal.setAttribute("aria-disabled", "true");
 
 	try {
-		await collector.setConsent(granted);
+		if (!granted && savedWithdrawal)
+			await collector.retryConsentWithdrawal(savedWithdrawal);
+		else await collector.setConsent(granted);
+
+		if (!granted) rememberWithdrawal();
 		collector.consentSignal?.addEventListener(
 			"abort",
 			() => {
@@ -83,7 +112,9 @@ const updateConsent = async (granted) => {
 		if (document.activeElement === retryWithdrawal) consent.focus();
 		retryWithdrawal.hidden = true;
 		showConsent();
-	} catch {
+	} catch (error) {
+		if (error instanceof ConsentWithdrawalError && error.retry)
+			rememberWithdrawal(error.retry);
 		retryWithdrawal.hidden = granted;
 		showConsent(
 			granted
@@ -107,6 +138,7 @@ retryWithdrawal.addEventListener("click", () => {
 	if (!updatingConsent) void updateConsent(false);
 });
 consent.disabled = false;
+if (savedWithdrawal) void updateConsent(false);
 button.disabled = false;
 button.addEventListener("click", () => {
 	const request = search.beginSearch(crypto.randomUUID());
