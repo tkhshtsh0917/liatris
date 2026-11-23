@@ -415,3 +415,69 @@ test("migrates v1 records and consent, honoring the UTF-8 batch byte limit", {
 
 registerRecoveryTests(origin);
 registerImpressionTests(origin);
+
+test("groups concurrent queue writes while isolating cancelled and oversized events", {
+	timeout: 30_000,
+}, async () => {
+	const browser = await chromium.launch();
+	try {
+		const page = await browser.newPage();
+		await page.goto(origin);
+		const result = await page.evaluate(async () => {
+			const { createQueuedDelivery } = (await import(
+				"/assets/src/queued-delivery.js" as string
+			)) as typeof import("../../src/queued-delivery.ts");
+			const queue = createQueuedDelivery({
+				profile: { tenant: "test", application: "grouped" },
+				profileHash: "grouped",
+				async sendBatch(records) {
+					return records.map(({ event_id }) => ({ event_id, status: "retry" }));
+				},
+			});
+			const signal = await queue.grant();
+			const group = new Set<IDBTransaction>();
+			const put = IDBObjectStore.prototype.put;
+			IDBObjectStore.prototype.put = function (value, key) {
+				if (this.name === "outbox" && value.attempts === 0)
+					group.add(this.transaction);
+				return put.call(this, value, key);
+			};
+
+			const event = (sample?: string): Envelope => ({
+				event_id: crypto.randomUUID(),
+				profile_hash: "grouped",
+				kind: "event",
+				payload: { action_name: "click", sample },
+			});
+			try {
+				const cancelled = new AbortController();
+				const writes = [
+					...Array.from({ length: 40 }, () => queue.enqueue(event(), signal)),
+					queue.enqueue(event(), cancelled.signal),
+					queue.enqueue(event("あ".repeat(11_000)), signal),
+				];
+				cancelled.abort();
+				const statuses = await Promise.allSettled(writes);
+				return {
+					transactions: group.size,
+					committed: statuses.filter(({ status }) => status === "fulfilled")
+						.length,
+					errors: statuses.flatMap((status) =>
+						status.status === "rejected" ? [String(status.reason)] : [],
+					),
+				};
+			} finally {
+				IDBObjectStore.prototype.put = put;
+				await queue.close();
+			}
+		});
+		assert.equal(result.committed, 40);
+		assert.equal(result.transactions, 2);
+		assert.deepEqual(result.errors, [
+			"Error: collection consent was withdrawn",
+			"RangeError: collection record is too large",
+		]);
+	} finally {
+		await browser.close();
+	}
+});

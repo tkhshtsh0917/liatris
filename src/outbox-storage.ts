@@ -3,6 +3,7 @@ import type { Envelope } from "./records.ts";
 export type QueuedEvent = {
 	scope: string;
 	record: Envelope;
+	encodedBytes?: number;
 	expiresAt: number;
 	nextAttempt: number;
 	attempts: number;

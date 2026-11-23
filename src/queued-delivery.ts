@@ -28,6 +28,14 @@ type Options = {
 	| { sendBatch: BatchDelivery; send?: never }
 );
 
+type Lease = { generation: string; controller: AbortController };
+type PendingWrite = {
+	record: Envelope;
+	signal: AbortSignal;
+	resolve: () => void;
+	reject: (error: unknown) => void;
+};
+
 const capacity = 512;
 const protectedCapacity = 64;
 const coalesceMs = 8;
@@ -45,7 +53,9 @@ export function createQueuedDelivery({
 	const scope = JSON.stringify([profile.tenant, profile.application]);
 	let database: Promise<IDBDatabase> | undefined;
 	let channel: BroadcastChannel | undefined;
-	let active: { generation: string; controller: AbortController } | undefined;
+	let active: Lease | undefined;
+	let writeGroup: { lease: Lease; writes: PendingWrite[] } | undefined;
+	const encoder = new TextEncoder();
 	let coalesce: ReturnType<typeof setTimeout> | undefined;
 	let retry: ReturnType<typeof setTimeout> | undefined;
 	let drain: Promise<void> | undefined;
@@ -82,13 +92,103 @@ export function createQueuedDelivery({
 		retry = setTimeout(wake, Math.max(0, at - Date.now()));
 	}
 
+	function byteLength(record: Envelope) {
+		return encoder.encode(JSON.stringify(record)).length;
+	}
+
+	async function saveGroup(lease: Lease, writes: PendingWrite[]) {
+		try {
+			const result = await updateOutbox(
+				await open(),
+				scope,
+				async (state, outbox) => {
+					if (
+						state?.generation !== lease.generation ||
+						lease.controller.signal.aborted
+					)
+						return;
+
+					const now = Date.now();
+					const expired = await outbox.expire(now);
+					let occupied = await outbox.count();
+					const errors: (Error | undefined)[] = [];
+					for (const { record, signal } of writes) {
+						if (signal.aborted || lease.controller.signal.aborted) {
+							errors.push(new Error("collection consent was withdrawn"));
+							continue;
+						}
+						const priority = deliveryPriority(record);
+						const limit = priority ? capacity - protectedCapacity : capacity;
+						// Overwriting an existing ID can leave more room than the upper bound.
+						if (occupied >= limit) occupied = await outbox.count();
+						if (signal.aborted || lease.controller.signal.aborted) {
+							errors.push(new Error("collection consent was withdrawn"));
+							continue;
+						}
+						if (occupied >= limit) {
+							errors.push(new RangeError("collection queue is full"));
+							continue;
+						}
+						try {
+							const encodedBytes = byteLength(record);
+							if (encodedBytes > maxRecordBytes)
+								throw new RangeError("collection record is too large");
+
+							outbox.put({
+								scope,
+								record,
+								encodedBytes,
+								priority,
+								expiresAt: now + retentionMs,
+								nextAttempt: now,
+								attempts: 0,
+							});
+						} catch (error) {
+							errors.push(
+								error instanceof Error
+									? error
+									: new Error("queue write failed"),
+							);
+							continue;
+						}
+						errors.push(undefined);
+						occupied++;
+					}
+					return { errors, expired };
+				},
+			);
+			if (!result) {
+				if (active === lease) stop();
+				throw new Error("collection consent was withdrawn");
+			}
+
+			for (let i = 0; i < result.expired; i++) notify("expired");
+			for (const [index, error] of result.errors.entries()) {
+				if (error) {
+					if (error.message === "collection queue is full") notify("capacity");
+					writes[index].reject(error);
+				} else {
+					writes[index].resolve();
+				}
+			}
+			if (
+				active === lease &&
+				result.errors.some((error) => error === undefined)
+			) {
+				if (!sendBatch || drain) wake();
+				else coalesce ??= setTimeout(wake, coalesceMs);
+			}
+		} catch (error) {
+			for (const write of writes) write.reject(error);
+		}
+	}
+
 	function sizedBatch(entries: QueuedEvent[]) {
-		const encoder = new TextEncoder();
 		let bytes = 2;
 		let count = 0;
 		for (const entry of entries) {
 			const size =
-				encoder.encode(JSON.stringify(entry.record)).length + Number(count > 0);
+				(entry.encodedBytes ?? byteLength(entry.record)) + Number(count > 0);
 			if (bytes + size > maxBatchBytes) break;
 			bytes += size;
 			count++;
@@ -314,52 +414,24 @@ export function createQueuedDelivery({
 
 		/** Returns after committing the envelope. A receiver acknowledgement removes it later. */
 		async enqueue(record: Envelope, signal: AbortSignal) {
-			if (
-				new TextEncoder().encode(JSON.stringify(record)).length > maxRecordBytes
-			)
-				throw new RangeError("collection record is too large");
-
 			const lease = active;
 			if (!lease) throw new Error("collection consent is inactive");
-			const stored = await updateOutbox(
-				await open(),
-				scope,
-				async (state, outbox) => {
-					if (
-						state?.generation !== lease.generation ||
-						lease.controller.signal.aborted ||
-						signal.aborted
-					)
-						return;
-					const now = Date.now();
-					const expired = await outbox.expire(now);
-					const occupied = await outbox.count();
-					if (signal.aborted || lease.controller.signal.aborted) return;
-					const priority = deliveryPriority(record);
-					const limit = priority ? capacity - protectedCapacity : capacity;
-					if (occupied >= limit) return { accepted: false, expired };
-					outbox.put({
-						scope,
-						record,
-						expiresAt: now + retentionMs,
-						nextAttempt: now,
-						attempts: 0,
-						priority,
-					});
-					return { accepted: true, expired };
-				},
-			);
-			if (stored === undefined) {
-				if (active === lease) stop();
-				throw new Error("collection consent was withdrawn");
+			if (signal.aborted) throw new Error("collection consent was withdrawn");
+
+			const { promise, resolve, reject } = Promise.withResolvers<void>();
+			if (
+				writeGroup?.lease !== lease ||
+				writeGroup.writes.length === maxBatchEvents
+			) {
+				const group = { lease, writes: [] as PendingWrite[] };
+				writeGroup = group;
+				queueMicrotask(() => {
+					if (writeGroup === group) writeGroup = undefined;
+					void saveGroup(lease, group.writes);
+				});
 			}
-			for (let i = 0; i < stored.expired; i++) notify("expired");
-			if (!stored.accepted) {
-				notify("capacity");
-				throw new RangeError("collection queue is full");
-			}
-			if (!sendBatch || drain) wake();
-			else coalesce ??= setTimeout(wake, coalesceMs);
+			writeGroup.writes.push({ record, signal, resolve, reject });
+			return promise;
 		},
 
 		async close() {
