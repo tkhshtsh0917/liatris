@@ -13,9 +13,9 @@ Liatris は Rust/WASM のセッション判定と TypeScript のコレクター�
 [rust-toolchain.toml](rust-toolchain.toml) の Rust ツールチェーンと [mise.toml](mise.toml) の Node.js をインストールします。
 
 ```sh
-npm ci
+mise exec -- npm ci
 mise run check
-npm run demo
+mise exec -- npm run demo
 ```
 
 [ローカルデモ](http://127.0.0.1:4173/)を開き、収集を許可し、サンプルの商品一覧を検索して 2 件目の結果をクリックします。ターミナルには受信したイベントの種別が表示されます。ローカルのリクエストを確認すると、検索、露出、クリックがクエリ ID とセッション ID を共有していることが分かります。露出とクリックには表示結果セット ID も付き、クリックの順位は 2 になります。**no results** では `result_count: 0` の `results_shown` を記録します。`search_submitted`、`results_shown`、初回クリックを確認すると、結果件数、順位付けの版、結果表示からクリックまでの時間が分かります。

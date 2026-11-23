@@ -13,9 +13,9 @@ Start with the [integration guide](docs/integration.md) to connect your profile,
 Install the Rust toolchain from [rust-toolchain.toml](rust-toolchain.toml) and Node.js from [mise.toml](mise.toml).
 
 ```sh
-npm ci
+mise exec -- npm ci
 mise run check
-npm run demo
+mise exec -- npm run demo
 ```
 
 Open [the local demo](http://127.0.0.1:4173/), allow collection, search the sample catalog, and click the second result. The demo prints the accepted categories in the terminal. Inspect the local requests to see that the query, impressions and click share a query ID and session ID. The impressions and click also include the displayed result-set ID, and the click records rank 2. The **no results** sample emits `results_shown` with `result_count: 0`. Inspect `search_submitted`, `results_shown` and the first click to see the count, ranking version and render-to-click delay.
