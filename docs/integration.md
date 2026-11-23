@@ -26,28 +26,32 @@ Open [the demo](http://127.0.0.1:4173/), enable collection, search for **garden 
 
 The demo also sends an optional UBI Query record with synthetic search text. The three-event integration below collects no search text.
 
-## 2. Build and configure the assets
+## 2. Install the browser SDK and compile a profile
 
-Build the browser modules and WASM from the same checkout. Create a profile from the sample and set your `tenant`, `application`, and collection `endpoint`. Set `allowQueryText = false` for this integration. The sample declares the three events and selects the UBI compatibility mode used for the standard `click` event. [Schema modes](design.md#ubi-and-sessions)
+Download `liatris-browser.tar.gz` and `SHA256SUMS` from the same [GitHub release](https://github.com/tkhshtsh0917/liatris/releases). Verify the archive and extract it. Development builds can generate the same files in `dist/sdk/` with `mise run wasm` followed by `mise exec -- npm run sdk:build`.
 
 ```sh
-cp examples/shop.toml my-service.toml
+shasum -a 256 -c SHA256SUMS && tar -xzf liatris-browser.tar.gz
+```
+
+From the matching source tag with the Node.js dependencies installed, copy the standalone example profile and set your `tenant`, `application`, and collection `endpoint`. This profile declares search submissions, result displays, impressions, and clicks with search text disabled. It uses the UBI compatibility mode for the standard click event. [Schema modes](design.md#ubi-and-sessions)
+
+```sh
+cp examples/browser/profile.toml my-service.toml
 # Edit my-service.toml before compiling.
-mise run wasm
-mise exec -- npm run demo:build
 artifact_dir=$(mktemp -d)
 mise exec -- npm run --silent profile -- my-service.toml "$artifact_dir/profile.json" > "$artifact_dir/profile.sha256"
 ```
 
-Publish these files from your application's HTTPS origin. The paths below are examples and must match the URLs in your integration module.
+Serve the following files on your application's HTTPS origin. Use a JavaScript MIME type for the ES modules and `application/wasm` for the session module. If you set a Content Security Policy, allow the module's origin and WASM execution in `script-src`. Allow the intake origin in `connect-src`.
 
-| Build output | URL in your app |
+| Source | URL in your app |
 | --- | --- |
-| The contents of `dist/demo/src/` with their filenames and relative imports intact | `/assets/liatris/` |
-| `target/wasm32-unknown-unknown/release/liatris_session.wasm` | `/assets/liatris/session.wasm` |
+| All `.js` files in `liatris-browser/`, with relative imports intact | `/assets/liatris/` |
+| `liatris-browser/session.wasm` | `/assets/liatris/session.wasm` |
 | `$artifact_dir/profile.json` and `$artifact_dir/profile.sha256` | `/assets/liatris/profile.json` and `/assets/liatris/profile.sha256` |
 
-Use the compiled profile and hash from this build in the receiving application as well. Deploy the browser and receiver configuration together.
+The archive includes `.d.ts` files alongside the JavaScript for TypeScript tooling. Use the same compiled profile and hash in the receiving application, and deploy the browser and receiver configuration together. The [standalone browser example](../examples/browser/) uses these public paths, and CI tests it against the extracted archive.
 
 ## 3. Initialize the collector in your app
 

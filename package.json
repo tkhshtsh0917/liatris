@@ -1,18 +1,21 @@
 {
   "name": "liatris",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/*.test.ts",
     "profile": "node tools/compile-profile.ts",
-    "lint": "biome check src tests tools server demo integration/kinesis benchmarks schema/profile.schema.json",
-    "format": "biome format --write src tests tools server demo integration/kinesis benchmarks schema/profile.schema.json",
+    "lint": "biome check src tests tools server demo examples/browser integration/kinesis benchmarks schema/profile.schema.json",
+    "format": "biome format --write src tests tools server demo examples/browser integration/kinesis benchmarks schema/profile.schema.json",
     "forward:kinesis": "node tools/forward-kinesis.ts",
     "test:browser": "npm run demo:build && node --test tests/browser/delivery.ts",
     "test:kinesis": "docker compose -f integration/kinesis/compose.yaml up --build --abort-on-container-exit --exit-code-from verification",
     "demo:build": "tsc -p tsconfig.demo.json",
-    "demo": "npm run demo:build && node demo/server.ts"
+    "demo": "npm run demo:build && node demo/server.ts",
+    "sdk:build": "node tools/package-sdk.ts",
+    "test:sdk": "node --test tests/distribution/browser.ts"
   },
   "dependencies": {
     "@aws-sdk/client-kinesis": "3.1175.0",

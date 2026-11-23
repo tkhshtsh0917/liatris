@@ -26,28 +26,32 @@ mise exec -- npm run demo
 
 デモではサンプルの検索語を含む UBI Query も任意の別レコードとして送ります。以下の3イベントの組み込み例は検索語を収集しません。
 
-## 2. プロファイルと配信ファイルを用意する
+## 2. ブラウザ SDK を配置し、プロファイルをコンパイルする
 
-同じチェックアウトでブラウザ用モジュールと WASM をビルドします。サンプルからプロファイルを作り、導入先の `tenant`、`application`、受信先の `endpoint` を指定します。この例では `allowQueryText = false` に設定します。サンプルには3イベントの定義と、UBI 標準の `click` を扱う互換モードが入っています。[スキーマモード](design.md#ubi-とセッション)
+同じ [GitHub リリース](https://github.com/tkhshtsh0917/liatris/releases)から `liatris-browser.tar.gz` と `SHA256SUMS` をダウンロードします。アーカイブを検証して展開します。開発時は `mise run wasm` に続けて `mise exec -- npm run sdk:build` を実行すると、同じ構成のファイルを `dist/sdk/` に生成できます。
 
 ```sh
-cp examples/shop.toml my-service.toml
+shasum -a 256 -c SHA256SUMS && tar -xzf liatris-browser.tar.gz
+```
+
+配布物と同じタグのソースで Node.js の依存関係をインストールしてから、独立サンプルのプロファイルをコピーし、`tenant`、`application`、収集先の `endpoint` を設定します。このプロファイルは検索開始、結果表示、露出、クリックを宣言し、検索語の収集を無効にします。標準のクリックイベントには UBI の互換モードを使います。[スキーマモード](design.md#ubi-とセッション)
+
+```sh
+cp examples/browser/profile.toml my-service.toml
 # コンパイルする前に my-service.toml を編集する。
-mise run wasm
-mise exec -- npm run demo:build
 artifact_dir=$(mktemp -d)
 mise exec -- npm run --silent profile -- my-service.toml "$artifact_dir/profile.json" > "$artifact_dir/profile.sha256"
 ```
 
-アプリケーションの HTTPS オリジンから、次のファイルを配信します。下表の URL は例です。変更する場合は、組み込みモジュールでも同じパスを使います。
+以下のファイルを導入先の HTTPS オリジンから配信します。ES モジュールには JavaScript の MIME タイプを、セッションモジュールには `application/wasm` を設定します。Content Security Policy を設定している場合は、`script-src` でモジュールのオリジンと WASM の実行を許可し、`connect-src` で収集先のオリジンを許可します。
 
-| 配信する成果物 | アプリケーションでの URL |
+| 配信元 | 導入先の URL |
 | --- | --- |
-| `dist/demo/src/` の中身。ファイル名と相対インポートを保ちます。 | `/assets/liatris/` |
-| `target/wasm32-unknown-unknown/release/liatris_session.wasm` | `/assets/liatris/session.wasm` |
+| `liatris-browser/` にあるすべての `.js` ファイル。相対 import はそのまま保ちます。 | `/assets/liatris/` |
+| `liatris-browser/session.wasm` | `/assets/liatris/session.wasm` |
 | `$artifact_dir/profile.json` と `$artifact_dir/profile.sha256` | `/assets/liatris/profile.json` と `/assets/liatris/profile.sha256` |
 
-このビルドで生成したプロファイルとハッシュを受信側でも使います。ブラウザと受信側の設定は揃えて反映します。
+アーカイブには TypeScript の開発ツールで使う `.d.ts` が JavaScript と同梱されています。受信側にも同じコンパイル済みプロファイルとハッシュを渡し、ブラウザと受信側の設定を一緒に配備します。[独立したブラウザサンプル](../../examples/browser/)は上記の公開パスを使い、CI ではアーカイブを展開して動作を検証します。
 
 ## 3. アプリケーションで初期化する
 
