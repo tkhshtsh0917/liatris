@@ -15,6 +15,8 @@ import { NodeHttpHandler } from "@smithy/node-http-handler";
 import { openEventStore } from "../../server/event-store.ts";
 import { createHttpReceiver } from "../../server/http.ts";
 import { forwardToKinesis } from "../../server/kinesis.ts";
+import { batchMediaType, readBatchReceipts } from "../../src/batch.ts";
+import type { Envelope } from "../../src/records.ts";
 import { compileProfile } from "../../tools/profile.ts";
 
 if (process.env.AWS_ENDPOINT_URL_KINESIS !== "http://moto:5000") {
@@ -63,16 +65,18 @@ try {
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	const address = server.address();
 	assert.ok(address && typeof address !== "string");
-	const post = (record: object) =>
+	const post = (value: Envelope | Envelope[]) =>
 		fetch(`http://127.0.0.1:${address.port}/api/ubi`, {
 			method: "POST",
 			headers: {
-				"content-type": "application/json",
+				"content-type": Array.isArray(value)
+					? batchMediaType
+					: "application/json",
 				authorization: `Bearer ${token}`,
 			},
-			body: JSON.stringify(record),
+			body: JSON.stringify(value),
 		});
-	const record = {
+	const record: Envelope = {
 		event_id: crypto.randomUUID(),
 		kind: "event",
 		profile_hash: sha256,
@@ -83,12 +87,19 @@ try {
 			session_id: crypto.randomUUID(),
 		},
 	};
+	const next: Envelope = { ...record, event_id: crypto.randomUUID() };
 	assert.equal((await post(record)).status, 204);
-	assert.equal((await post(record)).status, 204);
+	const events = [record, next];
+	const receipt = await post(events);
+	assert.equal(receipt.status, 200);
+	assert.deepEqual(
+		readBatchReceipts(await receipt.json(), events),
+		events.map(({ event_id }) => ({ event_id, status: "accepted" })),
+	);
 	const result = await forwardToKinesis(store, stream, (input) =>
 		client.send(new PutRecordsCommand(input)),
 	);
-	assert.deepEqual(result, { sent: 1, failed: 0 });
+	assert.deepEqual(result, { sent: 2, failed: 0 });
 	assert.deepEqual(store.pending(1), []);
 
 	const { Shards } = await client.send(
@@ -106,9 +117,13 @@ try {
 	const { Records } = await client.send(
 		new GetRecordsCommand({ ShardIterator }),
 	);
+	const read = Records?.map(
+		({ Data }) => JSON.parse(Buffer.from(Data ?? []).toString()) as Envelope,
+	);
+	assert.equal(read?.length, events.length);
 	assert.deepEqual(
-		Records?.map(({ Data }) => JSON.parse(Buffer.from(Data ?? []).toString())),
-		[record],
+		new Map(read?.map((event) => [event.event_id, event])),
+		new Map(events.map((event) => [event.event_id, event])),
 	);
 	console.log("Kinesis round trip passed");
 } finally {

@@ -35,6 +35,6 @@ npm run forward:kinesis
 npm run test:kinesis
 ```
 
-Compose のテストは、リファレンス HTTP 受信側への送信、同じイベント ID の再送、Moto から読み戻したイベントの照合まで確認します。バッチの一部だけが成功する場合は単体テストで検証します。IAM ロールは対象ストリームへの書き込みに限定し、本番の IAM ポリシーとサービスの制限は AWS 上で検証します。[Kinesis の IAM 文書](https://docs.aws.amazon.com/streams/latest/dev/controlling-access.html)
+Compose のテストは、リファレンス HTTP 受信側へ単件とバッチで送信します。同じイベント ID を両方のリクエストで送り、Moto から読み戻した2件のエンベロープを照合します。バッチの一部だけが成功する場合は単体テストで検証します。IAM ロールは対象ストリームへの書き込みに限定し、本番の IAM ポリシーとサービスの制限は AWS 上で検証します。[Kinesis の IAM 文書](https://docs.aws.amazon.com/streams/latest/dev/controlling-access.html)
 
 ブラウザ配送の検証は `mise run wasm` で WASM を作り、`npx playwright install chromium firefox webkit` でブラウザを入れて、`npm run test:browser` を実行します。受領応答の消失、再読み込みをまたぐ保持、別タブからの同意撤回、露出集中時の優先配送、部分的な受領、旧キューの移行に加え、オフラインからの復帰、429 に従う再送、保存容量エラーからの回復、タブの表示状態が戻ったときの配送再開を確認します。オフラインで新しいイベントを収集するには、そのページでセッション用 WASM を読み込み済みである必要があります。
