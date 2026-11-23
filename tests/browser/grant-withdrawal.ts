@@ -7,93 +7,14 @@ import {
 	type Page,
 	webkit,
 } from "playwright";
+import {
+	type GrantPage,
+	holdGrantOpen,
+	holdGrantTransaction,
+	type Notice,
+} from "./grant-fixture.ts";
 import { openSearch, postedEvents, submission } from "./search-fixture.ts";
 import { failWithdrawalWrite, pendingRecords } from "./withdrawal-fixture.ts";
-
-type Notice = { scope: string; generation: string; withdrawal: string };
-type GrantPage = Window & {
-	grantGate?: Promise<() => void>;
-	withdrawalNotice?: Promise<Notice>;
-};
-
-/** Hold the database open callback before the initializing tab reads its grant. */
-async function holdGrantOpen(page: Page) {
-	await page.evaluate(() => {
-		const open = IDBFactory.prototype.open;
-		const success = Object.getOwnPropertyDescriptor(
-			IDBRequest.prototype,
-			"onsuccess",
-		);
-		if (!success?.set) throw new Error("IndexedDB open handler is unavailable");
-
-		const gate = Promise.withResolvers<() => void>();
-		(window as GrantPage).grantGate = gate.promise;
-		IDBFactory.prototype.open = function (...args) {
-			const request = open.apply(this, args);
-			if (args[0] !== "liatris-delivery") return request;
-
-			IDBFactory.prototype.open = open;
-			Object.defineProperty(request, "onsuccess", {
-				set(listener: (event: Event) => void) {
-					success.set?.call(request, (event: Event) => {
-						gate.resolve(() => listener.call(request, event));
-					});
-				},
-			});
-			return request;
-		};
-	});
-}
-
-/** Pause after the initial read or hold an aborted verification callback. */
-async function holdGrantTransaction(page: Page, failVerification: boolean) {
-	await page.evaluate((failVerification) => {
-		const transaction = IDBDatabase.prototype.transaction;
-		const callback = failVerification ? "onabort" : "oncomplete";
-		const handler = Object.getOwnPropertyDescriptor(
-			IDBTransaction.prototype,
-			callback,
-		);
-		if (!handler?.set)
-			throw new Error("IndexedDB transaction handler is unavailable");
-
-		const get = IDBObjectStore.prototype.get;
-		const gate = Promise.withResolvers<() => void>();
-		(window as GrantPage).grantGate = gate.promise;
-		let reads = 0;
-
-		IDBDatabase.prototype.transaction = function (...args) {
-			const tx = transaction.apply(this, args);
-			if (
-				this.name !== "liatris-delivery" ||
-				++reads !== (failVerification ? 2 : 1)
-			)
-				return tx;
-
-			IDBDatabase.prototype.transaction = transaction;
-			Object.defineProperty(tx, callback, {
-				set(listener: (event: Event) => void) {
-					handler.set?.call(tx, (event: Event) => {
-						gate.resolve(() => listener.call(tx, event));
-					});
-				},
-			});
-			if (failVerification) {
-				IDBObjectStore.prototype.get = function (key) {
-					const request = get.call(this, key);
-					if (this.name === "scopes" && this.transaction === tx) {
-						IDBObjectStore.prototype.get = get;
-						request.addEventListener("success", () => tx.abort(), {
-							once: true,
-						});
-					}
-					return request;
-				};
-			}
-			return tx;
-		};
-	}, failVerification);
-}
 
 async function observeWithdrawal(page: Page) {
 	await page.evaluate(() => {
@@ -111,12 +32,16 @@ async function observeWithdrawal(page: Page) {
 
 async function beginHeldGrant(page: Page) {
 	await page.getByRole("checkbox").click();
+	await waitForGrantGate(page);
+	await observeWithdrawal(page);
+}
+
+async function waitForGrantGate(page: Page) {
 	await page.evaluate(async () => {
 		const { grantGate } = window as GrantPage;
 		if (!grantGate) throw new Error("grant gate is unavailable");
 		await grantGate;
 	});
-	await observeWithdrawal(page);
 }
 
 function releaseAfterWithdrawal(page: Page) {
@@ -199,7 +124,26 @@ export function registerGrantWithdrawalTests(origin: string) {
 				await starting.getByText("no-consent", { exact: true }).waitFor();
 
 				assert.ok(notice.withdrawal);
-				await holdGrantTransaction(starting, false);
+				await holdGrantTransaction(starting, "read");
+				await beginHeldGrant(starting);
+				await first.evaluate((notice) => {
+					const channel = new BroadcastChannel("liatris-consent");
+					channel.postMessage(notice);
+					channel.close();
+				}, notice);
+				assert.deepEqual(await releaseAfterWithdrawal(starting), notice);
+				await starting.getByText("Collection enabled.").waitFor();
+
+				const sent = starting.waitForResponse(
+					(response) => response.ok() && !!submission(response.request()),
+				);
+				await searchButton(starting).click();
+				await sent;
+
+				// Deduplication must survive a session write and another withdrawal.
+				await starting.getByRole("checkbox").uncheck();
+				await starting.getByText("Collection disabled.").waitFor();
+				await holdGrantTransaction(starting, "verify");
 				await beginHeldGrant(starting);
 				await first.evaluate((notice) => {
 					const channel = new BroadcastChannel("liatris-consent");
@@ -225,7 +169,7 @@ export function registerGrantWithdrawalTests(origin: string) {
 				await starting.goto(origin);
 				const old = await queueSearch(context, first);
 
-				await holdGrantTransaction(starting, true);
+				await holdGrantTransaction(starting, "verify-error");
 				await beginHeldGrant(starting);
 				await failWithdrawalWrite(first, false);
 				await first.getByRole("checkbox").uncheck();
@@ -274,6 +218,46 @@ export function registerGrantWithdrawalTests(origin: string) {
 					),
 				);
 				await assertFreshGrant(idle, old.event_id);
+			} finally {
+				await browser.close();
+			}
+		});
+
+		test(`${engine.name()} preserves a newer grant when an earlier withdrawal is delayed`, {
+			timeout: 30_000,
+		}, async () => {
+			const browser = await engine.launch();
+			try {
+				const context = await browser.newContext();
+				const first = await context.newPage();
+				const peer = await context.newPage();
+				await openSearch(first, origin);
+				await openSearch(peer, origin);
+
+				// The session transaction commits, but its callback delays the
+				// withdrawal queued behind it by the host's collector.
+				await holdGrantTransaction(first, "read");
+				await searchButton(first).click();
+				await waitForGrantGate(first);
+				await first.getByRole("checkbox").uncheck();
+				await peer.getByRole("checkbox").uncheck();
+				await peer.getByText("Collection disabled.").waitFor();
+				await peer.getByRole("checkbox").check();
+				await peer.getByText("Collection enabled.").waitFor();
+				const fresh = await queueSearch(context, peer);
+
+				await first.evaluate(async () => {
+					const { grantGate } = window as GrantPage;
+					if (!grantGate) throw new Error("grant gate is unavailable");
+					(await grantGate)();
+				});
+				await first.getByText("Collection disabled.").waitFor();
+				assert.equal(await peer.getByRole("checkbox").isChecked(), true);
+				assert.ok(
+					(await pendingRecords(peer)).some(
+						({ record }) => record.event_id === fresh.event_id,
+					),
+				);
 			} finally {
 				await browser.close();
 			}

@@ -264,6 +264,73 @@ function registerWithdrawalRecoveryTest(
 	});
 }
 
+function registerEquivalentWithdrawalTest(
+	origin: string,
+	engine: typeof chromium,
+) {
+	test(`${engine.name()} finishes pending cleanup started by another tab for the same withdrawn grant`, {
+		timeout: 30_000,
+	}, async () => {
+		const browser = await engine.launch();
+		try {
+			const context = await browser.newContext();
+			const first = await context.newPage();
+			const peer = await context.newPage();
+			const search = await openSearch(first, origin);
+			await peer.goto(origin);
+			await context.route("**/api/ubi", (route) =>
+				route.fulfill({ status: 503, headers: { "retry-after": "60" } }),
+			);
+			const queued = first.waitForResponse(
+				(response) =>
+					response.status() === 503 && !!submission(response.request()),
+			);
+			await search.click();
+			const event = submission((await queued).request());
+			assert.ok(event);
+
+			await failWithdrawalWrite(first, false);
+			await first.getByRole("checkbox").uncheck();
+			await first.getByText("Could not complete withdrawal.").waitFor();
+
+			await failQueueDeletion(peer);
+			const recorded = await peer.evaluate(async () => {
+				const { createQueuedDelivery, ConsentWithdrawalError } = (await import(
+					"/assets/src/queued-delivery.js" as string
+				)) as typeof import("../../src/queued-delivery.ts");
+				const { profile, sha256: profileHash } = await (
+					await fetch("/demo-config.json")
+				).json();
+				const queue = createQueuedDelivery({
+					profile,
+					profileHash,
+					async send() {},
+				});
+				try {
+					await queue.revoke();
+					return false;
+				} catch (error) {
+					return error instanceof ConsentWithdrawalError && !!error.retry;
+				} finally {
+					await queue.close();
+				}
+			});
+			assert.equal(recorded, true);
+			assert.ok(
+				(await pendingRecords(peer)).some(
+					({ record }) => record.event_id === event.event_id,
+				),
+			);
+
+			await first.getByRole("button", { name: "Retry withdrawal" }).click();
+			await first.getByText("Collection disabled.").waitFor();
+			assert.deepEqual(await pendingRecords(peer), []);
+		} finally {
+			await browser.close();
+		}
+	});
+}
+
 function registerWithdrawalWriteFailureTest(
 	origin: string,
 	engine: typeof chromium,
@@ -367,6 +434,7 @@ export function registerWithdrawalTests(origin: string) {
 	for (const engine of [chromium, firefox, webkit]) {
 		registerWithdrawalDuringGrantTest(origin, engine);
 		registerWithdrawalRecoveryTest(origin, engine);
+		registerEquivalentWithdrawalTest(origin, engine);
 		registerWithdrawalWriteFailureTest(origin, engine, false);
 		registerWithdrawalWriteFailureTest(origin, engine, true);
 	}

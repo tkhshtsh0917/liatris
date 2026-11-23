@@ -19,9 +19,22 @@ export function deliveryPriority({ kind, payload }: Envelope): 0 | 1 {
 		: 0;
 }
 
-export type ConsentState =
-	| { generation: string; session?: unknown; cleanupPending?: never }
-	| { generation: string; session?: never; cleanupPending: true };
+export type ConsentOrder = { lineage: string; revision: number };
+
+export type ConsentState = { order?: ConsentOrder } & (
+	| {
+			generation: string;
+			session?: unknown;
+			cleanupPending?: never;
+			withdrawnGeneration?: never;
+	  }
+	| {
+			generation: string;
+			session?: never;
+			cleanupPending: true;
+			withdrawnGeneration?: string | null;
+	  }
+);
 
 function result<T>(request: IDBRequest<T>): Promise<T> {
 	return new Promise((resolve, reject) => {

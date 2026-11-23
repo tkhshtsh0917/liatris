@@ -146,7 +146,13 @@ export function createCollector({
 
 		const controller = new AbortController();
 		if (queue) {
-			const signal = await withinSession(() => queue.grant());
+			let signal: AbortSignal;
+			try {
+				signal = await withinSession(() => queue.grant());
+			} catch (error) {
+				if (version !== consentVersion) return;
+				throw error;
+			}
 			if (version !== consentVersion || signal.aborted) return;
 			signal.addEventListener(
 				"abort",
@@ -299,9 +305,7 @@ export function createCollector({
 				throw new Error(
 					"withdrawal retry requires an inactive queued collector",
 				);
-			if (!retry) throw new TypeError("a withdrawal retry target is required");
-
-			await withdrawConsent(retry);
+			await withdrawConsent(queue.readWithdrawalRetry(retry));
 		},
 		/** The active grant's signal, aborted on local or shared revocation. */
 		get consentSignal(): AbortSignal | undefined {

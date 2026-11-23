@@ -6,8 +6,11 @@ import {
 	readBatchReceipts,
 } from "./batch.ts";
 import type { Delivery } from "./collector.ts";
+import { readObject } from "./fields.ts";
 import { HttpDeliveryError } from "./http-delivery.ts";
 import {
+	type ConsentOrder,
+	type ConsentState,
 	deliveryPriority,
 	openOutbox,
 	type QueuedEvent,
@@ -27,7 +30,24 @@ type Options = {
 	| { sendBatch: BatchDelivery; send?: never; parallelBatches?: 1 | 2 }
 );
 
-type Lease = { generation: string; controller: AbortController };
+type Generation = { generation: string; order: ConsentOrder };
+type Lease = Generation & { controller: AbortController };
+
+function consentOrder(state: ConsentState): ConsentOrder {
+	return state.order ?? { lineage: state.generation, revision: 0 };
+}
+
+function nextGeneration(
+	generation: string,
+	previous: ConsentState | undefined,
+): Generation {
+	if (!previous)
+		return { generation, order: { lineage: generation, revision: 0 } };
+
+	const { lineage, revision } = consentOrder(previous);
+	return { generation, order: { lineage, revision: revision + 1 } };
+}
+
 /** Identifies one queued withdrawal for a later retry in the same collection scope. */
 export type WithdrawalRetry = Readonly<{
 	scope: string;
@@ -73,12 +93,15 @@ export function createQueuedDelivery({
 
 	const scope = JSON.stringify([profile.tenant, profile.application]);
 	let database: Promise<IDBDatabase> | undefined;
+	let closing: Promise<void> | undefined;
 	let channel: BroadcastChannel | undefined;
 	let active: Lease | undefined;
 	let openingGrant: AbortController | undefined;
 	let granting: Promise<AbortSignal> | undefined;
+	let verifiedOrder: ConsentOrder | undefined;
 	const withdrawals = new Map<string, Set<string>>();
-	let failedWithdrawal: WithdrawalRetry | undefined;
+	let withdrawing = false;
+	let failedWithdrawal: { target?: WithdrawalRetry } | undefined;
 	let writeGroup: { lease: Lease; writes: PendingWrite[] } | undefined;
 	const encoder = new TextEncoder();
 	let coalesce: ReturnType<typeof setTimeout> | undefined;
@@ -87,11 +110,33 @@ export function createQueuedDelivery({
 	let wakeRequested = false;
 
 	function open() {
-		database ??= openOutbox().catch((error: unknown) => {
-			database = undefined;
-			throw error;
-		});
-		return database;
+		requireOpenQueue();
+		if (database) return database;
+
+		const connection: Promise<IDBDatabase> = openOutbox().then(
+			(db) => {
+				const invalidate = () => {
+					if (database !== connection) return;
+
+					database = undefined;
+					verifiedOrder = undefined;
+					stop();
+				};
+				db.addEventListener("versionchange", invalidate, { once: true });
+				db.addEventListener("close", invalidate, { once: true });
+				return db;
+			},
+			(error: unknown) => {
+				if (database === connection) database = undefined;
+				throw error;
+			},
+		);
+		database = connection;
+		return connection;
+	}
+
+	function requireOpenQueue() {
+		if (closing) throw new Error("collection queue is closed");
 	}
 
 	function stop() {
@@ -102,8 +147,9 @@ export function createQueuedDelivery({
 		coalesce = undefined;
 		window.removeEventListener("online", wake);
 		document.removeEventListener("visibilitychange", wake);
+		openingGrant?.abort(new Error("collection consent setup was stopped"));
 		lease?.controller.abort();
-		return lease?.generation;
+		if (lease) return { generation: lease.generation, order: lease.order };
 	}
 
 	function notify(reason: DropReason) {
@@ -125,12 +171,14 @@ export function createQueuedDelivery({
 
 	async function saveGroup(lease: Lease, writes: PendingWrite[]) {
 		try {
+			lease.controller.signal.throwIfAborted();
 			const result = await updateOutbox(
 				await open(),
 				scope,
 				async (state, outbox) => {
 					if (
 						state?.generation !== lease.generation ||
+						state.cleanupPending ||
 						lease.controller.signal.aborted
 					)
 						return;
@@ -241,7 +289,12 @@ export function createQueuedDelivery({
 			await open(),
 			scope,
 			async (state, outbox) => {
-				if (!state || state.generation !== lease.generation) return;
+				if (
+					!state ||
+					state.generation !== lease.generation ||
+					state.cleanupPending
+				)
+					return;
 				const now = Date.now();
 				const expired = await outbox.expire(now);
 				const ready = await outbox.ready(
@@ -306,7 +359,12 @@ export function createQueuedDelivery({
 			await open(),
 			scope,
 			async (state, outbox) => {
-				if (!state || state.generation !== lease.generation) return;
+				if (
+					!state ||
+					state.generation !== lease.generation ||
+					state.cleanupPending
+				)
+					return;
 				let count = 0;
 				for (const entry of entries) {
 					const id = entry.record.event_id;
@@ -371,6 +429,7 @@ export function createQueuedDelivery({
 				scope?: string;
 				generation?: string;
 				withdrawal?: string;
+				order?: ConsentOrder;
 			}>,
 		) => {
 			const notice = message.data;
@@ -379,6 +438,13 @@ export function createQueuedDelivery({
 
 			const matchesActive = active?.generation === notice.generation;
 			if (active && !matchesActive) return;
+			if (
+				!matchesActive &&
+				verifiedOrder &&
+				notice.order?.lineage === verifiedOrder.lineage &&
+				notice.order.revision < verifiedOrder.revision
+			)
+				return;
 
 			const id =
 				typeof notice.withdrawal === "string"
@@ -410,7 +476,7 @@ export function createQueuedDelivery({
 			if (state) await outbox.removeAll();
 			signal.throwIfAborted();
 
-			const created = { generation: crypto.randomUUID() };
+			const created = nextGeneration(crypto.randomUUID(), state);
 			outbox.setConsent(created);
 			return created;
 		});
@@ -425,26 +491,60 @@ export function createQueuedDelivery({
 			throw new Error("collection consent was withdrawn during setup");
 
 		withdrawals.clear();
+		verifiedOrder = consentOrder(state);
 		active = {
 			generation: state.generation,
+			order: verifiedOrder,
 			controller: new AbortController(),
 		};
 		return active.controller.signal;
 	}
 
-	function announceWithdrawal(generation: string, withdrawal: string) {
-		channel?.postMessage({ scope, generation, withdrawal });
+	function announceWithdrawal(target: Generation, withdrawal: string) {
+		channel?.postMessage({ scope, ...target, withdrawal });
 	}
 
-	async function withdraw(fallback?: string, retry?: WithdrawalRetry) {
+	/** Reads a retry from host storage before changing the queue or collector state. */
+	function readWithdrawalRetry(value: unknown): WithdrawalRetry {
+		const { scope: targetScope, generation, marker } = readObject(value);
+		if (
+			targetScope !== scope ||
+			(generation !== null && typeof generation !== "string") ||
+			typeof marker !== "string"
+		)
+			throw new TypeError("invalid withdrawal retry for this collection scope");
+
+		return { scope, generation, marker };
+	}
+
+	async function withdraw(fallback?: Generation, retry?: WithdrawalRetry) {
+		requireOpenQueue();
+		if (withdrawing)
+			throw new Error("collection withdrawal is already running");
 		watchRevocation();
-		let target = retry ?? failedWithdrawal;
+		let target = retry ?? failedWithdrawal?.target;
+		const known = target ? undefined : fallback;
+		if (known) {
+			target = {
+				scope,
+				generation: known.generation,
+				marker: crypto.randomUUID(),
+			};
+		}
+
+		let notified = false;
+		withdrawing = true;
 		try {
 			const db = await open();
 			const marker = await updateOutbox(db, scope, (state, outbox) => {
 				if (target) {
 					if (state?.generation === target.marker)
 						return state.cleanupPending ? target.marker : undefined;
+					if (
+						state?.cleanupPending &&
+						state.withdrawnGeneration === target.generation
+					)
+						return state.generation;
 					if ((state?.generation ?? null) !== target.generation) return;
 				} else {
 					target = {
@@ -458,8 +558,17 @@ export function createQueuedDelivery({
 				if (state?.cleanupPending) return state.generation;
 
 				// Notify before the write so a failed transaction still stops peers.
-				if (state) announceWithdrawal(state.generation, target.marker);
-				outbox.setConsent({ generation: target.marker, cleanupPending: true });
+				if (state)
+					announceWithdrawal(
+						{ generation: state.generation, order: consentOrder(state) },
+						target.marker,
+					);
+				notified = true;
+				outbox.setConsent({
+					...nextGeneration(target.marker, state),
+					cleanupPending: true,
+					withdrawnGeneration: target.generation,
+				});
 				return target.marker;
 			});
 			if (marker !== undefined) {
@@ -467,26 +576,26 @@ export function createQueuedDelivery({
 					if (!state?.cleanupPending || state.generation !== marker) return;
 
 					await outbox.removeAll();
-					outbox.setConsent({ generation: marker });
+					outbox.setConsent({ generation: marker, order: consentOrder(state) });
 				});
 			}
 		} catch (error) {
-			if (!target && fallback) {
-				// The storage failure happened before the transaction could read the grant.
-				target = { scope, generation: fallback, marker: crypto.randomUUID() };
-				announceWithdrawal(fallback, target.marker);
-			}
-			failedWithdrawal = target;
+			if (!notified && known && target)
+				announceWithdrawal(known, target.marker);
+			failedWithdrawal = { target };
 			throw new ConsentWithdrawalError(
 				error,
 				target && Object.freeze({ ...target }),
 			);
+		} finally {
+			withdrawing = false;
 		}
 		failedWithdrawal = undefined;
 	}
 
 	return {
 		suspend: stop,
+		readWithdrawalRetry,
 
 		resume() {
 			if (!active) return;
@@ -497,6 +606,11 @@ export function createQueuedDelivery({
 
 		/** Opens this tab's consent lease before delivery starts. */
 		async grant() {
+			requireOpenQueue();
+			if (withdrawing || failedWithdrawal)
+				throw new Error(
+					"withdrawal cleanup must complete before collection resumes",
+				);
 			if (active) return active.controller.signal;
 			if (granting) return granting;
 
@@ -509,26 +623,24 @@ export function createQueuedDelivery({
 		},
 
 		/** Aborts this tab and deletes session and queued data for every tab in the scope. */
-		revoke(previousGeneration?: string) {
+		revoke(previousGeneration?: Generation) {
 			const generation = stop() ?? previousGeneration;
 			return withdraw(generation);
 		},
 
 		/** Resumes an earlier withdrawal without changing a newer generation. */
 		retryWithdrawal(retry: WithdrawalRetry) {
-			if (
-				retry?.scope !== scope ||
-				(retry.generation !== null && typeof retry.generation !== "string") ||
-				typeof retry.marker !== "string"
-			)
-				throw new TypeError(
-					"invalid withdrawal retry for this collection scope",
-				);
+			if (active || openingGrant)
+				throw new Error("withdrawal retry requires an inactive queue");
+			const target = readWithdrawalRetry(retry);
 
-			if (failedWithdrawal && failedWithdrawal.marker !== retry.marker)
+			if (
+				failedWithdrawal?.target &&
+				failedWithdrawal.target.marker !== target.marker
+			)
 				throw new Error("another withdrawal must be completed first");
 
-			return withdraw(undefined, { ...retry });
+			return withdraw(undefined, target);
 		},
 
 		/** Shares the session transaction with the same persisted consent generation. */
@@ -545,11 +657,12 @@ export function createQueuedDelivery({
 							if (
 								!state ||
 								state.generation !== lease.generation ||
+								state.cleanupPending ||
 								lease.controller.signal.aborted
 							)
 								return;
 							const session = select(state.session);
-							outbox.setConsent({ generation: state.generation, session });
+							outbox.setConsent({ ...state, session });
 							return { session };
 						},
 					);
@@ -584,13 +697,20 @@ export function createQueuedDelivery({
 			return promise;
 		},
 
-		async close() {
+		/** Stops delivery and releases resources for this queue instance. */
+		close() {
+			if (closing) return closing;
+
+			closing = Promise.resolve(database).then(
+				(db) => db?.close(),
+				() => {},
+			);
+			database = undefined;
+			wakeRequested = false;
 			stop();
 			channel?.close();
 			channel = undefined;
-			const db = await database;
-			database = undefined;
-			db?.close();
+			return closing;
 		},
 	};
 }
