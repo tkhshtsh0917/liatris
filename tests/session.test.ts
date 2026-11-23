@@ -1,19 +1,29 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { createSessionManager } from "../src/session.ts";
+import { createSessionManager, sessionTransition } from "../src/session.ts";
 import { memorySessionStore } from "../src/session-store.ts";
 
-const wasm = await readFile(
-	new URL(
-		"../target/wasm32-unknown-unknown/release/liatris_session.wasm",
-		import.meta.url,
-	),
-);
 const scope = { tenant: "test", application: "search" };
 
+test("matches the timeout, clock rollback and invalid-input boundaries", () => {
+	const maxDate = 8_640_000_000_000_000;
+	assert.equal(sessionTransition(0, -1, 0), 2);
+	assert.equal(sessionTransition(1_799_999, 0, 0), 1);
+	assert.equal(sessionTransition(1_800_000, 0, 0), 2);
+	assert.equal(sessionTransition(60_000, 0, 60_000), 2);
+	assert.equal(sessionTransition(0, 300_000, 0), 1);
+	assert.equal(sessionTransition(0, 300_001, 0), 2);
+	assert.equal(sessionTransition(maxDate, -1, 0), 2);
+	assert.equal(sessionTransition(maxDate + 1, -1, 0), 0);
+	assert.equal(sessionTransition(Number.NaN, 1, 0), 0);
+	assert.equal(sessionTransition(1, Number.POSITIVE_INFINITY, 0), 0);
+	assert.equal(sessionTransition(1, -2, 0), 0);
+	assert.equal(sessionTransition(1, -1, 1), 0);
+	assert.equal(sessionTransition(1, -1, 86_400_001), 0);
+});
+
 test("assigns a UUID and renews after 30 minutes since the last activity", async () => {
-	const manager = await createSessionManager(wasm, memorySessionStore(), scope);
+	const manager = createSessionManager(memorySessionStore(), scope);
 	const first = await manager.recordActivity(1_000);
 	assert.match(first.sessionId, /^[0-9a-f-]{36}$/);
 	assert.equal(first.sessionNumber, 1);
@@ -31,9 +41,9 @@ test("assigns a UUID and renews after 30 minutes since the last activity", async
 
 test("one shared scope reuses state and removal starts a fresh lifetime", async () => {
 	const store = memorySessionStore();
-	const first = await createSessionManager(wasm, store, scope, 5);
-	const second = await createSessionManager(wasm, store, scope, 5);
-	const other = await createSessionManager(wasm, store, {
+	const first = createSessionManager(store, scope, 5);
+	const second = createSessionManager(store, scope, 5);
+	const other = createSessionManager(store, {
 		...scope,
 		application: "autocomplete",
 	});
@@ -54,12 +64,7 @@ test("one shared scope reuses state and removal starts a fresh lifetime", async 
 });
 
 test("recovers from a rejected timestamp and clamps small clock reversals", async () => {
-	const manager = await createSessionManager(
-		wasm,
-		memorySessionStore(),
-		scope,
-		1,
-	);
+	const manager = createSessionManager(memorySessionStore(), scope, 1);
 	const first = await manager.recordActivity(1_000);
 	await assert.rejects(manager.recordActivity(Number.NaN), RangeError);
 	assert.equal((await manager.recordActivity(0)).sessionId, first.sessionId);
@@ -67,19 +72,14 @@ test("recovers from a rejected timestamp and clamps small clock reversals", asyn
 		(await manager.recordActivity(60_000)).sessionId,
 		first.sessionId,
 	);
-	await assert.rejects(
-		createSessionManager(wasm, memorySessionStore(), scope, 0),
+	assert.throws(
+		() => createSessionManager(memorySessionStore(), scope, 0),
 		RangeError,
 	);
 });
 
-test("starts a new WASM session at the configured inactivity boundary", async () => {
-	const manager = await createSessionManager(
-		wasm,
-		memorySessionStore(),
-		scope,
-		15,
-	);
+test("starts a new session at the configured inactivity boundary", async () => {
+	const manager = createSessionManager(memorySessionStore(), scope, 15);
 	const first = await manager.recordActivity(0);
 	const latest = await manager.recordActivity(899_999);
 	assert.equal(latest.sessionId, first.sessionId);
@@ -91,7 +91,7 @@ test("starts a new WASM session at the configured inactivity boundary", async ()
 
 test("batches ordered activities across a session boundary and isolates invalid timestamps", async () => {
 	const store = memorySessionStore();
-	const manager = await createSessionManager(wasm, store, scope, 1);
+	const manager = createSessionManager(store, scope, 1);
 	let transactions = 0;
 	const update = store.update;
 	store.update = (key, next) => {

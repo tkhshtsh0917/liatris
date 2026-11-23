@@ -107,9 +107,6 @@ export function registerBatchingTests(origin: string) {
 					profile,
 					profileHash: sha256,
 					queue,
-					async loadWasm() {
-						return (await fetch("/session.wasm")).arrayBuffer();
-					},
 				});
 				await collector.setConsent(true);
 				const put = IDBObjectStore.prototype.put;

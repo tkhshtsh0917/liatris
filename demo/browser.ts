@@ -36,11 +36,6 @@ const collector = createCollector({
 		sendBatch: createHttpBatchDelivery(profile.endpoint),
 		parallelBatches: 2,
 	}),
-	async loadWasm() {
-		const response = await fetch("/session.wasm", { credentials: "omit" });
-		if (!response.ok) throw new Error("could not load the session module");
-		return response.arrayBuffer();
-	},
 });
 
 function element<T extends Element>(selector: string): T {

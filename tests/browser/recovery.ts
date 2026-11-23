@@ -64,7 +64,56 @@ export function registerRecoveryTests(origin: string) {
 		});
 	}
 
-	test("retries the persisted event after browser connectivity returns", {
+	test("reuses a session saved by the v0.2.0 storage format", {
+		timeout: 30_000,
+	}, async () => {
+		const browser = await chromium.launch();
+		try {
+			const page = await browser.newPage();
+			await page.goto(origin);
+			const expected = await page.evaluate(async () => {
+				const { openOutbox, updateOutbox } = (await import(
+					"/assets/src/outbox-storage.js" as string
+				)) as typeof import("../../src/outbox-storage.ts");
+				const db = await openOutbox();
+				const scope = JSON.stringify(["sample", "storefront"]);
+				const id = crypto.randomUUID();
+				const now = Date.now();
+				try {
+					await updateOutbox(db, scope, (_state, outbox) => {
+						outbox.setConsent({
+							generation: crypto.randomUUID(),
+							session: {
+								id,
+								number: 4,
+								startedAtMs: now - 1000,
+								lastActivityMs: now,
+							},
+						});
+					});
+				} finally {
+					db.close();
+				}
+				return id;
+			});
+			await page.getByRole("checkbox").check();
+			await page.getByText("Collection enabled.", { exact: true }).waitFor();
+			const receipt = page.waitForResponse(
+				(response) =>
+					response.status() === 200 &&
+					submission(response.request()) !== undefined,
+			);
+			await page.getByRole("button", { name: "Search", exact: true }).click();
+			assert.equal(
+				submission((await receipt).request())?.payload.session_id,
+				expected,
+			);
+		} finally {
+			await browser.close();
+		}
+	});
+
+	test("queues the first event offline and retries after connectivity returns", {
 		timeout: 30_000,
 	}, async () => {
 		const browser = await chromium.launch();
@@ -72,14 +121,6 @@ export function registerRecoveryTests(origin: string) {
 			const context = await browser.newContext();
 			const page = await context.newPage();
 			const search = await openSearch(page, origin);
-			// Load the session WASM before disconnecting so capture can queue offline.
-			const warm = page.waitForResponse(
-				(response) =>
-					response.status() === 200 &&
-					submission(response.request()) !== undefined,
-			);
-			await search.click();
-			await warm;
 			await context.setOffline(true);
 
 			const failed = page.waitForEvent("requestfailed", {

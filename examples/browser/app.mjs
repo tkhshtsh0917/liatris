@@ -29,7 +29,6 @@ const collector = createCollector({
 		sendBatch: createHttpBatchDelivery(profile.endpoint),
 		parallelBatches: 2,
 	}),
-	loadWasm: async () => (await asset("session.wasm")).arrayBuffer(),
 });
 const search = createSearchMeasurement(collector);
 const consent = document.querySelector("#consent");

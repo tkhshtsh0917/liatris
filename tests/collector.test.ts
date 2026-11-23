@@ -8,12 +8,6 @@ import type { Envelope } from "../src/records.ts";
 import { memorySessionStore } from "../src/session-store.ts";
 import { compileProfile } from "../tools/profile.ts";
 
-const wasm = await readFile(
-	new URL(
-		"../target/wasm32-unknown-unknown/release/liatris_session.wasm",
-		import.meta.url,
-	),
-);
 const { profile, sha256 } = compileProfile(
 	await readFile(new URL("../examples/shop.toml", import.meta.url), "utf8"),
 	"toml",
@@ -37,9 +31,6 @@ function fixture(deliver: Delivery, config = profile) {
 		async openStore() {
 			opened++;
 			return store;
-		},
-		async loadWasm() {
-			return wasm;
 		},
 		deliver,
 	});
@@ -151,7 +142,7 @@ test("aborts in-flight delivery on revocation and starts a new session after con
 	assert.notEqual(sessionIds[0], sessionIds[1]);
 });
 
-test("a fresh collector can revoke a previously persisted session without loading WASM", async () => {
+test("a fresh collector can reuse and revoke a persisted session with legacy options", async () => {
 	const store = memorySessionStore();
 	const sessionIds: unknown[] = [];
 	const options = {
@@ -159,9 +150,6 @@ test("a fresh collector can revoke a previously persisted session without loadin
 		profileHash: sha256,
 		async openStore() {
 			return store;
-		},
-		async loadWasm() {
-			return wasm;
 		},
 		async deliver(record: Envelope) {
 			sessionIds.push(record.payload.session_id);
@@ -174,13 +162,16 @@ test("a fresh collector can revoke a previously persisted session without loadin
 	const reopened = createCollector({
 		...options,
 		async loadWasm() {
-			assert.fail("cleanup loaded WASM");
+			assert.fail("legacy asset loader called");
 		},
 	});
-	await reopened.setConsent(false);
+	await reopened.setConsent(true);
+	assert.equal(await reopened.trackEvent("click", click), "sent");
+	assert.equal(sessionIds[0], sessionIds[1]);
 
+	await reopened.setConsent(false);
 	await original.trackEvent("click", click);
-	assert.notEqual(sessionIds[0], sessionIds[1]);
+	assert.notEqual(sessionIds[0], sessionIds[2]);
 });
 
 test("failed revocation keeps collection disabled until cleanup can be retried", async () => {
@@ -196,9 +187,6 @@ test("failed revocation keeps collection disabled until cleanup can be retried",
 					return store.update(key, next);
 				},
 			};
-		},
-		async loadWasm() {
-			return wasm;
 		},
 		async deliver() {},
 	});
@@ -228,9 +216,6 @@ test("requires cleanup after the latest of two queued revocations fails", async 
 					return null;
 				},
 			};
-		},
-		async loadWasm() {
-			assert.fail("unexpected WASM initialization");
 		},
 		async deliver() {
 			assert.fail("unexpected delivery");

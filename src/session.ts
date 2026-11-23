@@ -1,9 +1,9 @@
 import type { SessionState, SessionStore } from "./session-store.ts";
 
-type Exports = {
-	session_default_idle_ms(): number;
-	session_transition(now: number, previous: number, idleMs: number): number;
-};
+const minuteMs = 60_000;
+const maxIdleMs = 24 * 60 * minuteMs;
+const maxClockRollbackMs = 5 * minuteMs;
+export const defaultIdleMs = 30 * minuteMs;
 
 const uuidV4 =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -16,6 +16,27 @@ function isTime(value: unknown): value is number {
 		value >= 0 &&
 		value <= maxDateMs
 	);
+}
+
+/** Returns invalid, keep or start for timestamps in the persisted session format. */
+export function sessionTransition(
+	now: number,
+	previous: number,
+	idleMs: number,
+) {
+	const idle = idleMs === 0 ? defaultIdleMs : idleMs;
+	if (
+		!isTime(now) ||
+		!Number.isInteger(idle) ||
+		idle < minuteMs ||
+		idle > maxIdleMs
+	)
+		return 0;
+	if (previous === -1) return 2;
+	if (!isTime(previous)) return 0;
+
+	const elapsed = now - previous;
+	return elapsed >= idle || elapsed < -maxClockRollbackMs ? 2 : 1;
 }
 
 function readState(value: unknown): SessionState | undefined {
@@ -54,9 +75,8 @@ export async function clearSession(store: SessionStore, scope: Scope) {
 	await store.update(scopeKey(scope), () => null);
 }
 
-/** Loads the WASM session policy. Initialize only after consent is granted. */
-export async function createSessionManager(
-	wasm: BufferSource,
+/** Creates a manager that updates the scope through its supplied session store. */
+export function createSessionManager(
 	store: SessionStore,
 	scope: Scope,
 	inactivityMinutes?: number,
@@ -74,23 +94,14 @@ export async function createSessionManager(
 		throw new RangeError("invalid inactivity timeout");
 	}
 
-	const { instance } = await WebAssembly.instantiate(wasm);
-	const policy = instance.exports as unknown as Exports;
-	if (
-		typeof policy.session_transition !== "function" ||
-		typeof policy.session_default_idle_ms !== "function"
-	) {
-		throw new TypeError("invalid session WASM exports");
-	}
-
 	const key = scopeKey(scope);
 	const idleMs =
 		inactivityMinutes === undefined
-			? policy.session_default_idle_ms()
-			: inactivityMinutes * 60_000;
+			? defaultIdleMs
+			: inactivityMinutes * minuteMs;
 
 	function advance(previous: SessionState | undefined, nowMs: number) {
-		const decision = policy.session_transition(
+		const decision = sessionTransition(
 			nowMs,
 			previous?.lastActivityMs ?? -1,
 			idleMs,

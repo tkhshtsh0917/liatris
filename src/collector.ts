@@ -23,7 +23,8 @@ type Status = "sent" | "queued" | "no-consent" | "query-text-disabled";
 type Options = {
 	profile: Profile;
 	profileHash: string;
-	loadWasm: () => Promise<BufferSource>;
+	/** @deprecated Session handling is built in. This callback is ignored. */
+	loadWasm?: () => Promise<BufferSource>;
 } & (
 	| { openStore: () => Promise<SessionStore>; deliver: Delivery; queue?: never }
 	| { queue: QueuedDelivery; openStore?: never; deliver?: never }
@@ -42,7 +43,7 @@ function setSessionId(record: Envelope, sessionId: string) {
 	}
 }
 
-type Session = Awaited<ReturnType<typeof createSessionManager>>;
+type Session = ReturnType<typeof createSessionManager>;
 type Activity = Awaited<ReturnType<Session["recordActivity"]>>;
 type PendingActivity = {
 	at: number;
@@ -56,7 +57,6 @@ export function createCollector({
 	profile,
 	profileHash,
 	openStore,
-	loadWasm,
 	deliver,
 	queue,
 }: Options) {
@@ -85,12 +85,10 @@ export function createCollector({
 
 	async function getSession(signal: AbortSignal) {
 		if (!session) {
-			const wasm = await loadWasm();
 			if (signal.aborted) return;
 			store ??= await initializeStore();
 			if (signal.aborted) return;
-			session = await createSessionManager(
-				wasm,
+			session = createSessionManager(
 				store,
 				profile,
 				profile.session.inactivityMinutes,

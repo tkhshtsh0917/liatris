@@ -11,12 +11,6 @@ import {
 import { memorySessionStore } from "../src/session-store.ts";
 import { compileProfile } from "../tools/profile.ts";
 
-const wasm = await readFile(
-	new URL(
-		"../target/wasm32-unknown-unknown/release/liatris_session.wasm",
-		import.meta.url,
-	),
-);
 const { profile, sha256 } = compileProfile(
 	await readFile(new URL("../examples/shop.toml", import.meta.url), "utf8"),
 	"toml",
@@ -29,7 +23,6 @@ function setup(allowQueryText = true, deliver?: Delivery) {
 	const collector = createCollector({
 		profile: settings,
 		profileHash: sha256,
-		loadWasm: async () => wasm,
 		openStore: async () => memorySessionStore(),
 		deliver:
 			deliver ??
