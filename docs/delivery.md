@@ -8,7 +8,7 @@ Pass a `createQueuedDelivery` instance as the collector's `queue`. Give it the p
 
 The queue holds up to 512 records per origin, tenant and application. It reserves the last 64 places for records other than `result_impression` and `impression`, and prioritizes those records among items ready to send. At the applicable limit, it rejects new records. Entries expire after 24 hours and are removed when the queue is active. Transient failures retry with the same content and event ID and honor bounded `Retry-After` delays. Tokens are obtained per request and stay outside the queue. Retry resumes on consent, reconnect or a visibility change.
 
-Concurrent captures share IndexedDB write transactions of up to 32 events. Each event reports `queued` after the transaction commits.
+Concurrent captures share IndexedDB write transactions of up to 32 events. Each event reports `queued` after the transaction commits. Concurrent activity is evaluated in capture order, then only the final session state is written. The consent generation is checked before the write.
 
 Tabs share a consent generation, session and queue in IndexedDB. A withdrawal deletes the session and pending events in one transaction, changes the generation, and aborts active delivery in tabs that receive the notice. Late callbacks recheck the generation before updating storage. A request that already reached the collector service may have been accepted. Removal of received data is a server-side operation.
 

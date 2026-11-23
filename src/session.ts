@@ -35,6 +35,14 @@ function readState(value: unknown): SessionState | undefined {
 	}
 }
 
+type Activity = {
+	sessionId: string;
+	sessionNumber: number;
+	startedAtMs: number;
+	started: boolean;
+};
+type ActivityOutcome = { activity: Activity } | { error: unknown };
+
 type Scope = { tenant: string; application: string };
 
 function scopeKey({ tenant, application }: Scope) {
@@ -81,46 +89,80 @@ export async function createSessionManager(
 			? policy.session_default_idle_ms()
 			: inactivityMinutes * 60_000;
 
+	function advance(previous: SessionState | undefined, nowMs: number) {
+		const decision = policy.session_transition(
+			nowMs,
+			previous?.lastActivityMs ?? -1,
+			idleMs,
+		);
+		if (decision === 1 && previous) {
+			return {
+				...previous,
+				lastActivityMs: Math.max(nowMs, previous.lastActivityMs),
+			};
+		}
+		if (decision !== 2)
+			throw new RangeError("invalid activity time or policy result");
+
+		const number = (previous?.number ?? 0) + 1;
+		if (!Number.isSafeInteger(number))
+			throw new RangeError("session counter exhausted");
+		return {
+			id: crypto.randomUUID(),
+			number,
+			startedAtMs: nowMs,
+			lastActivityMs: nowMs,
+		};
+	}
+
+	/** Assigns activities in arrival order, writing the latest session once. */
+	async function recordActivities(
+		times: readonly number[],
+	): Promise<ActivityOutcome[]> {
+		if (times.length === 0) return [];
+		let outcomes: ActivityOutcome[] = [];
+		const unchanged = new Error("no activity to commit");
+
+		try {
+			await store.update(key, (stored) => {
+				const current: ActivityOutcome[] = [];
+				let state = readState(stored);
+				let accepted = false;
+				for (const time of times) {
+					try {
+						const previous = state;
+						state = advance(previous, time);
+						accepted = true;
+						current.push({
+							activity: {
+								sessionId: state.id,
+								sessionNumber: state.number,
+								startedAtMs: state.startedAtMs,
+								started: state.number !== previous?.number,
+							},
+						});
+					} catch (error) {
+						current.push({ error });
+					}
+				}
+				outcomes = current;
+				if (!accepted || !state) throw unchanged;
+				return state;
+			});
+		} catch (error) {
+			if (error !== unchanged) throw error;
+		}
+		return outcomes;
+	}
+
 	return {
+		recordActivities,
+
 		/** Assigns a session to one accepted live activity at capture time. */
 		async recordActivity(nowMs = Date.now()) {
-			let started = false;
-			const state = await store.update(key, (stored) => {
-				const previous = readState(stored);
-				const decision = policy.session_transition(
-					nowMs,
-					previous?.lastActivityMs ?? -1,
-					idleMs,
-				);
-
-				if (decision === 1 && previous) {
-					return {
-						...previous,
-						lastActivityMs: Math.max(nowMs, previous.lastActivityMs),
-					};
-				}
-				if (decision !== 2)
-					throw new RangeError("invalid activity time or policy result");
-
-				const number = (previous?.number ?? 0) + 1;
-				if (!Number.isSafeInteger(number))
-					throw new RangeError("session counter exhausted");
-
-				started = true;
-				return {
-					id: crypto.randomUUID(),
-					number,
-					startedAtMs: nowMs,
-					lastActivityMs: nowMs,
-				};
-			});
-			if (state === null) throw new Error("activity did not produce a session");
-			return {
-				sessionId: state.id,
-				sessionNumber: state.number,
-				startedAtMs: state.startedAtMs,
-				started,
-			};
+			const [outcome] = await recordActivities([nowMs]);
+			if ("error" in outcome) throw outcome.error;
+			return outcome.activity;
 		},
 
 		/** Deletes this scope after the host stops accepting activity. */

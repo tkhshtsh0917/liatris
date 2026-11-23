@@ -88,3 +88,36 @@ test("starts a new WASM session at the configured inactivity boundary", async ()
 	assert.notEqual(next.sessionId, first.sessionId);
 	assert.equal(next.sessionNumber, 2);
 });
+
+test("batches ordered activities across a session boundary and isolates invalid timestamps", async () => {
+	const store = memorySessionStore();
+	const manager = await createSessionManager(wasm, store, scope, 1);
+	let transactions = 0;
+	const update = store.update;
+	store.update = (key, next) => {
+		transactions++;
+		return update(key, next);
+	};
+
+	const outcomes = await manager.recordActivities([
+		1_000,
+		500,
+		Number.NaN,
+		61_000,
+		61_001,
+	]);
+	assert.equal(transactions, 1);
+	const [first, earlier, invalid, later, latest] = outcomes;
+	assert.ok("activity" in first && "activity" in earlier);
+	assert.ok("error" in invalid && invalid.error instanceof RangeError);
+	assert.ok("activity" in later && "activity" in latest);
+	assert.equal(first.activity.sessionId, earlier.activity.sessionId);
+	assert.notEqual(first.activity.sessionId, later.activity.sessionId);
+	assert.equal(later.activity.sessionId, latest.activity.sessionId);
+	assert.equal(later.activity.started, true);
+	assert.equal(latest.activity.started, false);
+	assert.equal(
+		(await manager.recordActivity(61_002)).sessionId,
+		latest.activity.sessionId,
+	);
+});

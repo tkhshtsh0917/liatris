@@ -481,3 +481,76 @@ test("groups concurrent queue writes while isolating cancelled and oversized eve
 		await browser.close();
 	}
 });
+
+test("coalesces session updates without rebinding observations to later events", {
+	timeout: 30_000,
+}, async () => {
+	const browser = await chromium.launch();
+	try {
+		const page = await browser.newPage();
+		await page.goto(origin);
+		const result = await page.evaluate(async () => {
+			const [{ createCollector }, { createQueuedDelivery }] = await Promise.all(
+				[
+					import("/assets/src/collector.js" as string) as Promise<
+						typeof import("../../src/collector.ts")
+					>,
+					import("/assets/src/queued-delivery.js" as string) as Promise<
+						typeof import("../../src/queued-delivery.ts")
+					>,
+				],
+			);
+			const { profile, sha256 } = await (
+				await fetch("/demo-config.json")
+			).json();
+			const queue = createQueuedDelivery({
+				profile,
+				profileHash: sha256,
+				async sendBatch(events) {
+					return events.map(({ event_id }) => ({
+						event_id,
+						status: "accepted",
+					}));
+				},
+			});
+			const collector = createCollector({
+				profile,
+				profileHash: sha256,
+				queue,
+				async loadWasm() {
+					return (await fetch("/session.wasm")).arrayBuffer();
+				},
+			});
+			await collector.setConsent(true);
+			const put = IDBObjectStore.prototype.put;
+			let writes = 0;
+			IDBObjectStore.prototype.put = function (value, key) {
+				if (this.name === "scopes" && value.session) writes++;
+				return put.call(this, value, key);
+			};
+			const clock = Date.now;
+			const firstAt = clock();
+			const laterAt = firstAt + 31 * 60_000;
+			try {
+				Date.now = () => firstAt;
+				const first = collector.trackEvent("add_cart");
+				const bound = collector.bindObservation();
+				Date.now = () => laterAt;
+				const later = collector.trackEventWithObservation("add_cart");
+				await Promise.all([first, later.delivery]);
+				return {
+					writes,
+					firstMs: await bound?.sessionElapsedMs(laterAt),
+					laterMs: await later.observation?.sessionElapsedMs(laterAt),
+				};
+			} finally {
+				Date.now = clock;
+				IDBObjectStore.prototype.put = put;
+				await queue.close();
+			}
+		});
+		assert.deepEqual(result, { writes: 1, firstMs: 31 * 60_000, laterMs: 0 });
+	} finally {
+		await browser.close();
+	}
+});

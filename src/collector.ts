@@ -1,3 +1,4 @@
+import { maxBatchEvents } from "./batch.ts";
 import type { Profile } from "./profile.ts";
 import type { QueuedDelivery } from "./queued-delivery.ts";
 import {
@@ -43,6 +44,12 @@ function setSessionId(record: Envelope, sessionId: string) {
 
 type Session = Awaited<ReturnType<typeof createSessionManager>>;
 type Activity = Awaited<ReturnType<Session["recordActivity"]>>;
+type PendingActivity = {
+	at: number;
+	resolve: (activity: Activity | undefined) => void;
+	reject: (error: unknown) => void;
+};
+type ActivityGroup = { signal: AbortSignal; requests: PendingActivity[] };
 
 /** Captures explicitly declared events after the host grants consent. */
 export function createCollector({
@@ -64,7 +71,8 @@ export function createCollector({
 	let store: SessionStore | undefined;
 	let consentVersion = 0;
 	let cleanupRequired = false;
-	let lastActivity: Activity | undefined;
+	let latestAssignment: Promise<Activity | undefined> | undefined;
+	let waiting: ActivityGroup | undefined;
 
 	function withinSession<T>(operation: () => Promise<T>) {
 		const running = sessionTail.then(operation);
@@ -73,6 +81,54 @@ export function createCollector({
 			() => {},
 		);
 		return running;
+	}
+
+	async function getSession(signal: AbortSignal) {
+		if (!session) {
+			const wasm = await loadWasm();
+			if (signal.aborted) return;
+			store ??= await initializeStore();
+			if (signal.aborted) return;
+			session = await createSessionManager(
+				wasm,
+				store,
+				profile,
+				profile.session.inactivityMinutes,
+			);
+		}
+		return signal.aborted ? undefined : session;
+	}
+
+	async function assignGroup({ signal, requests }: ActivityGroup) {
+		const manager = signal.aborted ? undefined : await getSession(signal);
+		const outcomes =
+			manager && (await manager.recordActivities(requests.map(({ at }) => at)));
+		for (const [index, request] of requests.entries()) {
+			const outcome = outcomes?.[index];
+			if (signal.aborted || !outcome) request.resolve(undefined);
+			else if ("error" in outcome) request.reject(outcome.error);
+			else request.resolve(outcome.activity);
+		}
+	}
+
+	function assignActivity(signal: AbortSignal, at: number) {
+		const maxGroup = queue ? maxBatchEvents : 1;
+		if (waiting?.signal !== signal || waiting.requests.length === maxGroup) {
+			const group: ActivityGroup = { signal, requests: [] };
+			waiting = group;
+			void withinSession(async () => {
+				if (waiting === group) waiting = undefined;
+				await assignGroup(group);
+			}).catch((error: unknown) => {
+				for (const request of group.requests) request.reject(error);
+			});
+		}
+		const { promise, resolve, reject } = Promise.withResolvers<
+			Activity | undefined
+		>();
+		waiting.requests.push({ at, resolve, reject });
+		latestAssignment = promise;
+		return promise;
 	}
 
 	/** Revocation stops capture immediately and clears any prior persisted session. */
@@ -96,7 +152,7 @@ export function createCollector({
 						controller.abort();
 						if (consent === controller) {
 							consent = undefined;
-							lastActivity = undefined;
+							latestAssignment = undefined;
 							session = undefined;
 						}
 					},
@@ -111,7 +167,7 @@ export function createCollector({
 		consent?.abort();
 		consent = undefined;
 		queue?.suspend();
-		lastActivity = undefined;
+		latestAssignment = undefined;
 		cleanupRequired = true;
 		await withinSession(async () => {
 			cleanupRequired = true;
@@ -166,26 +222,7 @@ export function createCollector({
 
 		const assigned =
 			anchor ??
-			(await withinSession(async () => {
-				if (signal.aborted) return;
-				lastActivity = undefined;
-				if (!session) {
-					const wasm = await loadWasm();
-					if (signal.aborted) return;
-					store ??= await initializeStore();
-					if (signal.aborted) return;
-					session = await createSessionManager(
-						wasm,
-						store,
-						profile,
-						profile.session.inactivityMinutes,
-					);
-				}
-				if (signal.aborted) return;
-				const activity = await session.recordActivity(now);
-				if (!signal.aborted) lastActivity = activity;
-				return activity;
-			}).catch((error: unknown) => {
+			(await assignActivity(signal, now).catch((error: unknown) => {
 				if (!signal.aborted) throw error;
 			}));
 		if (!assigned || signal.aborted) return "no-consent";
@@ -254,7 +291,8 @@ export function createCollector({
 			if (signal)
 				return createObservation(
 					signal,
-					sessionTail.then(() => lastActivity),
+					latestAssignment?.catch(() => undefined) ??
+						Promise.resolve(undefined),
 				);
 		},
 		/** Records a live event and binds subsequent observations to that exact event's session. */
