@@ -32,11 +32,13 @@ const collector = createCollector({
 });
 const search = createSearchMeasurement(collector);
 const consent = document.querySelector("#consent");
+const consentStatus = document.querySelector("#consent-status");
 const button = document.querySelector("#search");
 const results = document.querySelector("#results");
 const status = document.querySelector("#status");
 if (
 	!(consent instanceof HTMLInputElement) ||
+	!consentStatus ||
 	!(button instanceof HTMLButtonElement) ||
 	!results ||
 	!status
@@ -48,22 +50,34 @@ const captureFailed = () => {
 	status.textContent = "Capture failed.";
 };
 
-consent.addEventListener("change", async () => {
-	button.disabled = true;
-	const granted = consent.checked;
-	if (!granted) stopImpressions();
+/** @param {string} [message] */
+const showConsent = (message) => {
+	consent.checked = collector.consentSignal !== undefined;
+	consentStatus.textContent =
+		message ??
+		(consent.checked ? "Collection enabled." : "Collection disabled.");
+};
 
+consent.addEventListener("change", async () => {
+	consent.disabled = true;
 	try {
-		await collector.setConsent(granted);
-		status.textContent = granted
-			? "Collection enabled."
-			: "Collection disabled.";
+		await collector.setConsent(consent.checked);
+		collector.consentSignal?.addEventListener(
+			"abort",
+			() => {
+				stopImpressions();
+				if (!consent.disabled) showConsent();
+			},
+			{ once: true },
+		);
+		showConsent();
 	} catch {
-		captureFailed();
+		showConsent("Could not update collection consent.");
 	} finally {
-		button.disabled = false;
+		consent.disabled = false;
 	}
 });
+consent.disabled = false;
 button.disabled = false;
 button.addEventListener("click", () => {
 	const request = search.beginSearch(crypto.randomUUID());

@@ -67,6 +67,23 @@ function isSubmission(record: Envelope) {
 	return record.payload.action_name === "search_submitted";
 }
 
+function queuedEventCount(page: Page) {
+	return page.evaluate(
+		() =>
+			new Promise<number>((resolve, reject) => {
+				const open = indexedDB.open("liatris-delivery");
+				open.onerror = () => reject(open.error);
+				open.onsuccess = () => {
+					const tx = open.result.transaction("outbox");
+					const count = tx.objectStore("outbox").count();
+					count.onsuccess = () => resolve(count.result);
+					count.onerror = () => reject(count.error);
+					tx.oncomplete = () => open.result.close();
+				};
+			}),
+	);
+}
+
 for (const engine of [chromium, firefox, webkit]) {
 	test(`${engine.name()} resumes a committed event after reload and an acknowledgement loss`, {
 		timeout: 30_000,
@@ -138,7 +155,7 @@ for (const engine of [chromium, firefox, webkit]) {
 		}
 	});
 
-	test(`${engine.name()} discards pending events and disallows another tab after revocation`, {
+	test(`${engine.name()} preserves pending events until withdrawal and updates peer consent controls`, {
 		timeout: 30_000,
 	}, async () => {
 		const browser = await engine.launch();
@@ -171,26 +188,20 @@ for (const engine of [chromium, firefox, webkit]) {
 			await search(peer);
 			const original = await delayed.promise;
 
+			const undecided = await context.newPage();
+			await undecided.goto(origin);
+			await search(undecided);
+			await undecided.getByText("no-consent", { exact: true }).waitFor();
+			assert.ok((await queuedEventCount(peer)) > 0);
+
 			await revoke(first);
+			await peer.getByText("Collection disabled.", { exact: true }).waitFor();
+			assert.equal(await peer.getByRole("checkbox").isChecked(), false);
 			await search(peer);
 			await peer.getByText("no-consent", { exact: true }).waitFor();
-			const remaining = await peer.evaluate(
-				() =>
-					new Promise<number>((resolve, reject) => {
-						const open = indexedDB.open("liatris-delivery");
-						open.onerror = () => reject(open.error);
-						open.onsuccess = () => {
-							const tx = open.result.transaction("outbox");
-							const count = tx.objectStore("outbox").count();
-							count.onsuccess = () => resolve(count.result);
-							count.onerror = () => reject(count.error);
-							tx.oncomplete = () => open.result.close();
-						};
-					}),
-			);
-			assert.equal(remaining, 0);
+			await peer.getByText("2 result(s)", { exact: true }).waitFor();
+			assert.equal(await queuedEventCount(peer), 0);
 			offline = false;
-			await revoke(peer);
 			await grant(peer);
 
 			const posted = peer.waitForResponse(

@@ -127,7 +127,7 @@ export function createCollector({
 		return promise;
 	}
 
-	/** Revocation stops capture immediately and clears any prior persisted session. */
+	/** Grants capture for this collector or withdraws consent and clears persisted state. */
 	async function setConsent(granted: boolean) {
 		const version = ++consentVersion;
 		if (granted) {
@@ -145,11 +145,11 @@ export function createCollector({
 				signal.addEventListener(
 					"abort",
 					() => {
-						controller.abort();
 						if (consent === controller) {
 							consent = undefined;
 							latestAssignment = undefined;
 							session = undefined;
+							controller.abort();
 						}
 					},
 					{ once: true },
@@ -160,12 +160,12 @@ export function createCollector({
 			return;
 		}
 
-		consent?.abort();
+		const previous = consent;
 		consent = undefined;
 		queue?.suspend();
 		latestAssignment = undefined;
 		cleanupRequired = true;
-		await withinSession(async () => {
+		const cleanup = withinSession(async () => {
 			cleanupRequired = true;
 			if (queue) await queue.revoke();
 			else {
@@ -175,6 +175,8 @@ export function createCollector({
 			session = undefined;
 			cleanupRequired = false;
 		});
+		previous?.abort();
+		await cleanup;
 	}
 
 	async function capture(
@@ -281,6 +283,10 @@ export function createCollector({
 
 	return {
 		setConsent,
+		/** The active grant's signal, aborted on local or shared revocation. */
+		get consentSignal(): AbortSignal | undefined {
+			return consent?.signal;
+		},
 		/** Binds later observations to the most recent activity queued in this collector. */
 		bindObservation() {
 			const signal = consent?.signal;

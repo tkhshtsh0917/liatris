@@ -154,7 +154,8 @@ test("an independent site captures a search using only the extracted SDK", {
 
 	const browser = await chromium.launch();
 	try {
-		const page = await browser.newPage();
+		const context = await browser.newContext();
+		const page = await context.newPage();
 		await page.goto(origin);
 		await page.getByRole("checkbox").check();
 		await page.getByText("Collection enabled.", { exact: true }).waitFor();
@@ -189,6 +190,39 @@ test("an independent site captures a search using only the extracted SDK", {
 			1,
 		);
 		assert.ok(records.every(({ payload }) => !("user_query" in payload)));
+
+		const peer = await context.newPage();
+		await peer.goto(origin);
+		const peerConsent = peer.getByRole("checkbox");
+		await peerConsent.check();
+		await peer.getByText("Collection enabled.", { exact: true }).waitFor();
+		await peerConsent.uncheck();
+		await page.getByText("Collection disabled.", { exact: true }).waitFor();
+		const consent = page.getByRole("checkbox");
+		assert.equal(await consent.isChecked(), false);
+		await consent.check();
+		await page.getByText("Collection enabled.", { exact: true }).waitFor();
+
+		const oldQueryId = records[0].payload.query_id;
+		await page.getByRole("button", { name: "Reset your password" }).click();
+		const freshSearch = page.waitForResponse((response) => {
+			if (!response.url().endsWith(profile.endpoint) || !response.ok())
+				return false;
+
+			const batch = response.request().postDataJSON() as typeof records;
+			return batch.some(
+				({ payload }) =>
+					payload.action_name === "search_submitted" &&
+					payload.query_id !== oldQueryId,
+			);
+		});
+		await page.getByRole("button", { name: "Search for account help" }).click();
+		await freshSearch;
+		assert.equal(
+			store.pending(20).filter(({ payload }) => payload.query_id === oldQueryId)
+				.length,
+			records.length,
+		);
 	} finally {
 		await browser.close();
 	}

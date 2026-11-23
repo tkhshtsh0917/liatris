@@ -56,7 +56,7 @@ mise exec -- npm run --silent profile -- my-service.toml "$artifact_dir/profile.
 
 ## 3. アプリケーションで初期化する
 
-ブラウザのエントリーポイント、または ES モジュールで読み込みます。`obtainWriteToken` には、収集 API 用のスコープ限定トークンを取得する導入先の関数を渡します。初期化時と同意状態が変わるたびに、同意画面の状態を `setMeasurementConsent` に渡し、処理の完了を待ってから計測を開始します。
+ブラウザのエントリーポイント、または ES モジュールで読み込みます。`obtainWriteToken` には、収集 API 用のスコープ限定トークンを取得する導入先の関数を渡します。
 
 ```js
 import { createCollector, createHttpBatchDelivery } from "/assets/liatris/collector.js";
@@ -95,6 +95,10 @@ export async function createSearchTracking(obtainWriteToken) {
   };
 }
 ```
+
+コレクターは収集を無効にした状態で起動します。導入先が利用者の同意状態を読み込んでいる間や、利用者がまだ選択していない間は、この初期状態を維持してください。保存済みの同意を復元する場合も含め、同意を確認できたら `setMeasurementConsent(true)` を呼び、完了を待ちます。明示的な撤回を反映するときは `setMeasurementConsent(false)` を呼び、完了を待ちます。キュー配送では、同じ収集スコープの共有セッションと未送信イベントが削除されます。別タブで発生したイベントも対象です。起動時にチェックボックスが未選択でも、同意状態が未確定の場合があります。
+
+同意を反映した後は `collector.consentSignal` から有効な同意のシグナルを取得できます。その `abort` イベントを購読し、同意画面の表示を更新して監視処理を停止してください。収集が無効なら、このプロパティは `undefined` を返します。キュー配送では、別タブでの撤回でもシグナルが中断されることがあります。同意を得るたびに、プロパティからシグナルを取得し直してください。独立したブラウザサンプルに、チェックボックスと連携する実装があります。[サンプルのソース](../../examples/browser/app.mjs)
 
 同意状態が変わっても、進行中の検索は応答を受け取って描画できます。利用者が画面を離れるなど、検索自体を取り消す場合は `search.clear()` を呼びます。
 

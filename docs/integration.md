@@ -56,7 +56,7 @@ The archive contains the browser SDK and its TypeScript declarations. Run the pr
 
 ## 3. Initialize the collector in your app
 
-Load this in your browser entry point or an ES module. Replace `obtainWriteToken` with the application function that obtains a scoped token for the collection API. Pass the state from your consent UI to `setMeasurementConsent` at initialization and when it changes. Wait for the update before starting collection.
+Load this in your browser entry point or an ES module. Replace `obtainWriteToken` with the application function that obtains a scoped token for the collection API.
 
 ```js
 import { createCollector, createHttpBatchDelivery } from "/assets/liatris/collector.js";
@@ -95,6 +95,10 @@ export async function createSearchTracking(obtainWriteToken) {
   };
 }
 ```
+
+The collector starts with collection disabled. While the host loads the user's consent decision, or while the user has yet to choose, leave the collector in that initial state. Call and await `setMeasurementConsent(true)` once you have confirmed consent, including when you restore a saved grant. Call and await `setMeasurementConsent(false)` to apply an explicit withdrawal. With queued delivery, this clears the shared session and unsent events for the collection scope, including those from other tabs. An unchecked checkbox at startup can simply mean the decision is still unknown.
+
+After granting consent, use `collector.consentSignal` to read the active grant and listen for its `abort` event to update the consent UI and stop observers. The getter returns `undefined` when collection is disabled. With queued delivery, a withdrawal in another tab can abort the signal. Read the getter again after each new grant. The standalone browser example shows how to connect this to a checkbox. [Example source](../examples/browser/app.mjs)
 
 A consent change leaves the current search request available for rendering. Use `search.clear()` when the host abandons the search, such as when the user leaves the surface.
 

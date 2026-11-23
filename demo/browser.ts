@@ -45,6 +45,7 @@ function element<T extends Element>(selector: string): T {
 }
 
 const consent = element<HTMLInputElement>("#consent");
+const consentStatus = element<HTMLParagraphElement>("#consent-status");
 const form = element<HTMLFormElement>("#search");
 const searchTerm = element<HTMLSelectElement>("#term");
 const results = element<HTMLUListElement>("#results");
@@ -180,20 +181,39 @@ function showResults(
 	});
 }
 
-consent.addEventListener("change", () => {
-	const granted = consent.checked;
-	if (!granted) {
-		impressions?.close();
-		impressions = undefined;
-		stopEngagement();
-	}
+function stopResultTracking() {
+	impressions?.close();
+	impressions = undefined;
+	stopEngagement();
+}
 
-	void report(
-		collector
-			.setConsent(granted)
-			.then(() => (granted ? "Collection enabled." : "Collection disabled.")),
-	);
+function showConsent(message?: string) {
+	consent.checked = collector.consentSignal !== undefined;
+	consentStatus.textContent =
+		message ??
+		(consent.checked ? "Collection enabled." : "Collection disabled.");
+}
+
+consent.addEventListener("change", async () => {
+	consent.disabled = true;
+	try {
+		await collector.setConsent(consent.checked);
+		collector.consentSignal?.addEventListener(
+			"abort",
+			() => {
+				stopResultTracking();
+				if (!consent.disabled) showConsent();
+			},
+			{ once: true },
+		);
+		showConsent();
+	} catch {
+		showConsent("Could not update collection consent.");
+	} finally {
+		consent.disabled = false;
+	}
 });
+consent.disabled = false;
 
 form.addEventListener("submit", (event) => {
 	event.preventDefault();
@@ -205,12 +225,6 @@ form.addEventListener("submit", (event) => {
 		showResults(display, hits);
 		summary.textContent = `${hits.length} result(s)`;
 	};
-	if (!consent.checked) {
-		searchMeasurement.clear();
-		draw();
-		return;
-	}
-
 	const search = searchMeasurement.beginSearch(crypto.randomUUID());
 	void report(search.submitted);
 	const query = search.trackQueryText(term);

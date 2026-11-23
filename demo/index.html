@@ -9,7 +9,8 @@
     <main>
       <h1>Liatris collector demo</h1>
       <p>Search the sample catalog and click a result. The terminal shows accepted searches, visible results, clicks, and measured dwell.</p>
-      <label><input type="checkbox" id="consent" autocomplete="off"> Allow collection in this tab</label>
+      <label><input type="checkbox" id="consent" autocomplete="off" disabled> Allow collection in this tab</label>
+      <p id="consent-status" role="status">Collection disabled.</p>
       <form id="search">
         <label for="term">Sample query</label>
         <select id="term">
@@ -25,7 +26,7 @@
         <p>Sample product details.</p>
         <button type="button" id="close-detail">Close detail</button>
       </section>
-      <p id="status" role="status">Collection disabled.</p>
+      <p id="status" role="status"></p>
     </main>
     <script type="module" src="/assets/demo/browser.js"></script>
   </body>

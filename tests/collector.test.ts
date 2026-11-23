@@ -131,13 +131,27 @@ test("aborts in-flight delivery on revocation and starts a new session after con
 		});
 	});
 
+	const { consentSignal: initialGrant } = collector;
+	assert.equal(initialGrant, undefined);
 	await collector.setConsent(true);
+	const grant = collector.consentSignal;
+	assert.ok(grant);
+	assert.equal(grant.aborted, false);
+	const grantAtRevocation: (AbortSignal | undefined)[] = [];
+	grant.addEventListener("abort", () => {
+		grantAtRevocation.push(collector.consentSignal);
+	});
+
 	const pending = collector.trackEvent("click", click);
 	await started;
 	await collector.setConsent(false);
+	assert.deepEqual(grantAtRevocation, [undefined]);
 	assert.equal(await pending, "no-consent");
 	assert.equal(await collector.trackEvent("click", click), "no-consent");
+
 	await collector.setConsent(true);
+	assert.equal(collector.consentSignal?.aborted, false);
+	assert.notEqual(collector.consentSignal, grant);
 	assert.equal(await collector.trackEvent("click", click), "sent");
 	assert.notEqual(sessionIds[0], sessionIds[1]);
 });
