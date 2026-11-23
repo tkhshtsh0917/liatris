@@ -136,13 +136,51 @@ test("keeps rendering available without consent and cancels tracking after revoc
 		/render failed/,
 	);
 	await collector.setConsent(false);
-	search.render(settings, (display) => assert.equal(display, undefined));
+	await collector.setConsent(true);
+	const drawn: (DisplayedSearchResults | undefined)[] = [];
+	assert.equal(
+		search.render(settings, (display) => drawn.push(display)),
+		undefined,
+	);
+	assert.deepEqual(drawn, [undefined]);
+
 	meter.clear();
 	assert.equal(
 		search.render(settings, () => assert.fail("closed surface rendered")),
 		undefined,
 	);
 	assert.equal(sent.length, 1);
+});
+
+test("aborts an existing display signal permanently when consent is withdrawn", async () => {
+	const { collector, meter } = setup();
+	await collector.setConsent(true);
+	const earlier = meter.beginSearch("before-withdrawal");
+	await earlier.submitted;
+
+	let previous: DisplayedSearchResults | undefined;
+	await earlier.render(settings, (display) => {
+		previous = display;
+	});
+	assert.ok(previous);
+	assert.equal(previous.signal.aborted, false);
+
+	await collector.setConsent(false);
+	assert.equal(previous.signal.aborted, true);
+	await collector.setConsent(true);
+	assert.equal(previous.signal.aborted, true);
+	assert.equal(previous.firstClickDelay(), undefined);
+
+	const current = meter.beginSearch("after-regrant");
+	await current.submitted;
+	assert.equal(
+		await current.render(settings, (display) => {
+			assert.ok(display);
+			assert.equal(display.signal.aborted, false);
+			assert.notEqual(display.resultSet, previous?.resultSet);
+		}),
+		"sent",
+	);
 });
 
 test("records a rendered response while the submitted event awaits delivery", async () => {

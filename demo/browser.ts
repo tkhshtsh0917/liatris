@@ -55,14 +55,18 @@ const detailTitle = element<HTMLHeadingElement>("#detail-title");
 const closeDetailButton = element<HTMLButtonElement>("#close-detail");
 let engagement: ReturnType<typeof observeEngagement> | undefined;
 
-function closeDetail(flush: boolean) {
-	if (flush) engagement?.checkpoint();
+function stopEngagement() {
 	engagement?.close();
 	engagement = undefined;
+}
+
+function closeDetail() {
+	engagement?.checkpoint();
+	stopEngagement();
 	detail.hidden = true;
 }
 
-closeDetailButton.addEventListener("click", () => closeDetail(true));
+closeDetailButton.addEventListener("click", closeDetail);
 
 async function report(operation: Promise<string>) {
 	try {
@@ -95,11 +99,11 @@ function openDetail(
 	target: Target,
 	ordinal: number,
 ) {
-	closeDetail(true);
+	closeDetail();
 	detailTitle.textContent = target.title;
 	detail.hidden = false;
 	closeDetailButton.focus();
-	if (!display) return;
+	if (!display || display.signal.aborted) return;
 
 	const detailId = crypto.randomUUID();
 	const event = resultEvent(display, target, ordinal);
@@ -151,7 +155,7 @@ function showResults(
 		display && hits.length
 			? observeResultImpressions(profile.impressions, (ordinal) => {
 					const hit = hits[ordinal - 1];
-					if (!hit) return;
+					if (!hit || display.signal.aborted) return;
 
 					void collector
 						.trackEvent("result_impression", resultEvent(display, hit, ordinal))
@@ -177,22 +181,23 @@ function showResults(
 }
 
 consent.addEventListener("change", () => {
-	searchMeasurement.clear();
-	closeDetail(false);
-	showResults(undefined, []);
-	summary.textContent = "";
+	const granted = consent.checked;
+	if (!granted) {
+		impressions?.close();
+		impressions = undefined;
+		stopEngagement();
+	}
+
 	void report(
 		collector
-			.setConsent(consent.checked)
-			.then(() =>
-				consent.checked ? "Collection enabled." : "Collection disabled.",
-			),
+			.setConsent(granted)
+			.then(() => (granted ? "Collection enabled." : "Collection disabled.")),
 	);
 });
 
 form.addEventListener("submit", (event) => {
 	event.preventDefault();
-	closeDetail(true);
+	closeDetail();
 
 	const term = searchTerm.value;
 	const hits = catalog[term] ?? [];

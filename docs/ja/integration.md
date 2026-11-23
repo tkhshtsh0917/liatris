@@ -91,13 +91,12 @@ export async function createSearchTracking(obtainWriteToken) {
   return {
     collector,
     search,
-    setMeasurementConsent(granted) {
-      if (!granted) search.clear();
-      return collector.setConsent(granted);
-    },
+    setMeasurementConsent: collector.setConsent,
   };
 }
 ```
+
+同意状態が変わっても、進行中の検索は応答を受け取って描画できます。利用者が画面を離れるなど、検索自体を取り消す場合は `search.clear()` を呼びます。
 
 ## 4. アプリケーションの3か所から収集 API を呼ぶ
 
@@ -105,14 +104,14 @@ export async function createSearchTracking(obtainWriteToken) {
 | --- | --- |
 | 利用者が検索を確定したとき | `search.beginSearch(queryId)` を呼びます。検索ごとに不透明な ID を作り、通信の再試行では同じ ID を使います。戻り値をそのリクエストと一緒に保持します。 |
 | 応答を表示できるようになったとき | `request.render({ resultCount, rankingVersion }, draw)` に、実際の表示件数と採用した順位付けの版を渡します。`draw(display)` の中で同期的に一覧を描画し、クリック時に使う `display` をそれぞれのカードと一緒に保持します。非同期描画のフレームワークでは、表示が確定する箇所に計測をつなぎます。同意などで計測が無効な場合、`display` は `undefined` になります。 |
-| 表示中の結果をクリックしたとき | `collector.trackEvent("click", ...)` に、そのカードの表示時の文脈、アイテム ID、表示順位を渡します。次の検索が進行中でも、クリックされたカードにひも付く値を使います。 |
+| 表示中の結果をクリックしたとき | `collector.trackEvent("click", ...)` に、そのカードの表示時の文脈、アイテム ID、表示順位を渡します。同意シグナルが有効な間は、クリックされたカードの表示時の文脈を使います。 |
 
 `request.submitted` とクリック時の `trackEvent` の Promise でエラーを処理します。`request.render` が Promise を返した場合も同様に処理します。検索の画面遷移や業務処理は収集結果を待たずに進めます。デモのソースでは、必要に応じて追加できる露出・滞在時間も含めて、実際の呼び出し箇所が確認できます。[デモのソース](../../demo/browser.ts)
 
-クリック時の `itemId` と `displayedRank` はアプリケーションの描画処理で決まります。安定した不透明なアイテム ID と、1 始まりの表示順位を渡します。
+クリック時の `itemId` と `displayedRank` はアプリケーションの描画処理で決まります。安定した不透明なアイテム ID と、1 始まりの表示順位を渡します。カード本来の操作は計測の条件判定の外で実行します。同意を撤回すると、その表示にひも付くシグナルが中止され、クリックと露出の計測が止まります。再同意は以後の検索に適用されます。
 
 ```js
-if (display) {
+if (display && !display.signal.aborted) {
   void collector.trackEvent("click", {
     query_id: display.queryId,
     event_attributes: {
@@ -128,4 +127,4 @@ if (display) {
 
 プロファイルの `endpoint` に POST ルートを用意します。アプリケーションと同じ HTTPS オリジンでの配信を基本とします。Node.js の参考実装なら、`openEventStore(path, profile)` で保存先を作り、そのルートで `createHttpReceiver(profile, profileHash, store.accept, { audience, verifyBearer, acceptBatch: store.acceptBatch })` を使います。`profile` と `profileHash` は手順2で配信した二つのコンパイル済みファイルから読み、ハッシュファイルの末尾の改行は `trim()` で除きます。`verifyBearer` はトークンを認証し、検証済みのテナント、アプリケーション、対象サービス、`liatris:write` 権限、有効期限を返します。既存の受信 API を使う場合は、同じ HTTP 契約で受け付けます。ブラウザと受信 API のオリジンが異なる場合は、ゲートウェイまたは HTTP サーバーで `OPTIONS` のプリフライトを含む CORS を設定します。[受信側の入口](../../server/http.ts) · [永続配送](delivery.md) · [認証と本番公開の条件](security.md)
 
-自分のページで手順1と同じ確認をしたら、同意を撤回してもう一度検索します。検索結果が表示され、撤回後の新しい収集 POST が出なければ、組み込みの確認は完了です。すぐに返る `queued` はブラウザ内への保存を表し、受信側の応答本文の `accepted` が、そのイベントの永続保存を確認する応答です。
+自分のページで手順1と同じ確認をしたら、検索を開始し、応答を待っている間に同意を撤回します。検索結果が表示され、新しい収集 POST が発生しないことを確認します。再同意後は撤回前のカードをクリックして通常の操作ができることを確認します。次に記録されるクリックは、新たに検索した結果のカードをクリックしたときのものです。すぐに返る `queued` はブラウザ内への保存を表し、受信側の応答本文の `accepted` が、そのイベントの永続保存を確認する応答です。

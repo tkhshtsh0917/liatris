@@ -3,12 +3,14 @@ import test from "node:test";
 import { chromium, firefox, type Page, type Request, webkit } from "playwright";
 import type { Envelope } from "../../src/records.ts";
 
-function submission(request: Request) {
+function postedEvents(request: Request): Envelope[] {
 	if (!request.url().endsWith("/api/ubi") || request.method() !== "POST")
-		return;
+		return [];
+	return request.postDataJSON() as Envelope[];
+}
 
-	const events = request.postDataJSON() as Envelope[];
-	return events.find(
+function submission(request: Request) {
+	return postedEvents(request).find(
 		({ payload }) => payload.action_name === "search_submitted",
 	);
 }
@@ -63,6 +65,80 @@ export function registerRecoveryTests(origin: string) {
 			}
 		});
 	}
+
+	test("keeps result cards usable across consent changes and measures clicks only on fresh results", {
+		timeout: 30_000,
+	}, async () => {
+		const browser = await chromium.launch();
+		try {
+			const page = await browser.newPage();
+			const clicks: Envelope[] = [];
+			page.on("request", (request) => {
+				clicks.push(
+					...postedEvents(request).filter(
+						({ payload }) => payload.action_name === "click",
+					),
+				);
+			});
+
+			const search = await openSearch(page, origin);
+			const consent = page.getByRole("checkbox");
+			const result = page.getByRole("button", { name: "Garden spade" });
+			const detail = page.getByRole("heading", { name: "Garden spade" });
+			const close = page.getByRole("button", { name: "Close detail" });
+			const initial = page.waitForResponse(
+				(response) =>
+					response.status() === 200 &&
+					submission(response.request()) !== undefined,
+			);
+			await search.click();
+			const firstQueryId = submission((await initial).request())?.payload
+				.query_id;
+			assert.ok(firstQueryId);
+
+			await consent.uncheck();
+			await page.getByText("Collection disabled.", { exact: true }).waitFor();
+			await result.click();
+			await detail.waitFor();
+			await close.click();
+
+			await consent.check();
+			await page.getByText("Collection enabled.", { exact: true }).waitFor();
+			await result.click();
+			await detail.waitFor();
+			await close.click();
+
+			const fresh = page.waitForResponse((response) => {
+				const event = submission(response.request());
+				return (
+					response.status() === 200 &&
+					event !== undefined &&
+					event.payload.query_id !== firstQueryId
+				);
+			});
+			await search.click();
+			const freshQueryId = submission((await fresh).request())?.payload
+				.query_id;
+			assert.ok(freshQueryId);
+			const click = page.waitForResponse(
+				(response) =>
+					response.status() === 200 &&
+					postedEvents(response.request()).some(
+						({ payload }) =>
+							payload.action_name === "click" &&
+							payload.query_id === freshQueryId,
+					),
+			);
+			await result.click();
+			await click;
+			assert.deepEqual(
+				clicks.map(({ payload }) => payload.query_id),
+				[freshQueryId],
+			);
+		} finally {
+			await browser.close();
+		}
+	});
 
 	test("reuses a session saved by the v0.2.0 storage format", {
 		timeout: 30_000,

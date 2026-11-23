@@ -91,13 +91,12 @@ export async function createSearchTracking(obtainWriteToken) {
   return {
     collector,
     search,
-    setMeasurementConsent(granted) {
-      if (!granted) search.clear();
-      return collector.setConsent(granted);
-    },
+    setMeasurementConsent: collector.setConsent,
   };
 }
 ```
+
+A consent change leaves the current search request available for rendering. Use `search.clear()` when the host abandons the search, such as when the user leaves the surface.
 
 ## 4. Add three calls at the application boundaries
 
@@ -105,14 +104,14 @@ export async function createSearchTracking(obtainWriteToken) {
 | --- | --- |
 | When the user submits a search | Call `search.beginSearch(queryId)`. Generate an opaque ID for the search, reuse it for retries, and keep the returned object with that request. |
 | When the response is ready to render | Call `request.render({ resultCount, rankingVersion }, draw)` with the count shown and version selected by your app. Synchronously render inside `draw(display)`. Keep `display` with the rendered cards for their click handlers. In asynchronous UI frameworks, connect measurement to the actual commit. The callback can receive `undefined` when measurement is inactive. |
-| When a visible result is clicked | Call `collector.trackEvent("click", ...)` with the display context and the card's ID and displayed rank. Use each card's own display context even when another query is pending. |
+| When a visible result is clicked | Call `collector.trackEvent("click", ...)` with the display context and the card's ID and displayed rank. Use the card's own display context while its consent signal is active. |
 
 Handle errors from `request.submitted`, the optional promise returned by `request.render`, and the click's `trackEvent` promise. Keep search navigation and business actions responsive while collecting logs. The runnable demo shows the full call sites, including optional impressions and dwell time. [Demo source](../demo/browser.ts)
 
-For the third call, `itemId` and `displayedRank` come from your result renderer. Use a stable, opaque item ID and a rank starting at 1.
+For the third call, `itemId` and `displayedRank` come from your result renderer. Use a stable, opaque item ID and a rank starting at 1. Keep the card's normal action outside the tracking check. Consent withdrawal aborts the old display signal for both clicks and impressions. A fresh consent grant applies to subsequent searches.
 
 ```js
-if (display) {
+if (display && !display.signal.aborted) {
   void collector.trackEvent("click", {
     query_id: display.queryId,
     event_attributes: {
@@ -128,4 +127,4 @@ if (display) {
 
 Host a POST route at the profile's `endpoint`, preferably on the application's HTTPS origin. For the Node.js reference implementation, mount `createHttpReceiver(profile, profileHash, store.accept, { audience, verifyBearer, acceptBatch: store.acceptBatch })` at that route with a store created by `openEventStore(path, profile)`. Load `profile` and `profileHash` from the two compiled files you served in step 2. Use `trim()` to strip the newline from the hash file. `verifyBearer` authenticates each token and returns the verified tenant, application, audience, `liatris:write` permission, and expiry. An existing receiver can implement the same HTTP contract. If the browser and intake are on different origins, configure the gateway or your HTTP server to handle CORS, including the `OPTIONS` preflight. [Receiver entry point](../server/http.ts) · [Durable delivery](delivery.md) · [Authentication and production controls](security.md)
 
-Repeat the checks in step 1 against your own page, then withdraw consent and try another search. A working integration renders the results and produces no new collection POST after withdrawal. The immediate `queued` result shows local storage in the browser. An `accepted` receipt in the response body confirms durable storage for that event.
+Repeat the checks in step 1 against your own page. Start a search and withdraw consent while the response is pending. Confirm the results appear and the page sends no new collection POST. Regrant consent and click a card from the pre-withdrawal results. Its normal action should work, and a click from a fresh search should be the next click recorded. The immediate `queued` result shows local storage in the browser. An `accepted` receipt in the response body confirms durable storage for that event.

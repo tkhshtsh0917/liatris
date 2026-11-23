@@ -50,11 +50,10 @@ const captureFailed = () => {
 
 consent.addEventListener("change", async () => {
 	button.disabled = true;
-	search.clear();
-	stopImpressions();
-	results.replaceChildren();
+	const granted = consent.checked;
+	if (!granted) stopImpressions();
+
 	try {
-		const granted = consent.checked;
 		await collector.setConsent(granted);
 		status.textContent = granted
 			? "Collection enabled."
@@ -91,6 +90,7 @@ button.addEventListener("click", () => {
 				metadata: { result_set: display.resultSet },
 			};
 			const observer = observeResultImpressions(profile.impressions, () => {
+				if (display.signal.aborted) return;
 				void collector
 					.trackEvent("result_impression", input)
 					.catch(captureFailed);
@@ -98,6 +98,7 @@ button.addEventListener("click", () => {
 			observer.observe(result, 1);
 			stopImpressions = () => observer.close();
 			result.addEventListener("click", () => {
+				if (display.signal.aborted) return;
 				void collector.trackEvent("click", input).catch(captureFailed);
 			});
 		},

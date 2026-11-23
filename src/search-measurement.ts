@@ -17,6 +17,8 @@ const generatedFields = ["result_set", "result_count", "ranking_version"];
 export type DisplayedSearchResults = {
 	readonly queryId: string;
 	readonly resultSet: string;
+	/** Aborts when consent for this display is withdrawn. */
+	readonly signal: AbortSignal;
 	/** Returns the elapsed milliseconds for the first click on this displayed set. */
 	firstClickDelay(): number | undefined;
 };
@@ -26,7 +28,7 @@ export function createSearchMeasurement(collector: Collector) {
 	let latest: symbol | undefined;
 
 	return {
-		/** Clears the current measurement when leaving the surface or changing consent. */
+		/** Invalidates pending renders when the host abandons the current search. */
 		clear() {
 			latest = undefined;
 		},
@@ -80,6 +82,7 @@ export function createSearchMeasurement(collector: Collector) {
 					draw({
 						queryId,
 						resultSet,
+						signal: observation.signal,
 						firstClickDelay() {
 							if (renderedAt === undefined || observation.signal.aborted)
 								return;
