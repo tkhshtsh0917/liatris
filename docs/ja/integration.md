@@ -6,11 +6,10 @@
 
 ## 1. デモで一連の動作を確認する
 
-Liatris のチェックアウトで、指定の Node.js と Rust のツールチェーンを使います。
+Liatris のチェックアウトで、指定の Node.js を使います。
 
 ```sh
 mise exec -- npm ci
-mise run wasm
 mise exec -- npm run demo
 ```
 
@@ -28,7 +27,7 @@ mise exec -- npm run demo
 
 ## 2. ブラウザ SDK を配置し、プロファイルをコンパイルする
 
-同じ [GitHub リリース](https://github.com/tkhshtsh0917/liatris/releases)から `liatris-browser.tar.gz` と `SHA256SUMS` をダウンロードします。アーカイブを検証して展開します。開発時は `mise run wasm` に続けて `mise exec -- npm run sdk:build` を実行すると、同じ構成のファイルを `dist/sdk/` に生成できます。
+使用する SDK のバージョンに対応した導入ガイドに従います。[GitHub リリース](https://github.com/tkhshtsh0917/liatris/releases)を使う場合は、同じリリースから `liatris-browser.tar.gz` と `SHA256SUMS` をダウンロードし、アーカイブを検証して展開します。開発用のチェックアウトでは `mise exec -- npm run sdk:build` を実行して、`dist/sdk/` に SDK を生成します。
 
 ```sh
 shasum -a 256 -c SHA256SUMS && tar -xzf liatris-browser.tar.gz
@@ -43,12 +42,11 @@ artifact_dir=$(mktemp -d)
 mise exec -- npm run --silent profile -- my-service.toml "$artifact_dir/profile.json" > "$artifact_dir/profile.sha256"
 ```
 
-以下のファイルを導入先の HTTPS オリジンから配信します。ES モジュールには JavaScript の MIME タイプを、セッションモジュールには `application/wasm` を設定します。Content Security Policy を設定している場合は、`script-src` でモジュールのオリジンと WASM の実行を許可し、`connect-src` で収集先のオリジンを許可します。
+以下のファイルを導入先の HTTPS オリジンから配信します。ES モジュールには JavaScript の MIME タイプを設定します。Content Security Policy を設定している場合は、`script-src` でモジュールのオリジンを、`connect-src` で収集先のオリジンを許可します。
 
 | 配信元 | 導入先の URL |
 | --- | --- |
 | `liatris-browser/` にあるすべての `.js` ファイル。相対 import はそのまま保ちます。 | `/assets/liatris/` |
-| `liatris-browser/session.wasm` | `/assets/liatris/session.wasm` |
 | `$artifact_dir/profile.json` と `$artifact_dir/profile.sha256` | `/assets/liatris/profile.json` と `/assets/liatris/profile.sha256` |
 
 アーカイブには TypeScript の開発ツールで使う `.d.ts` が JavaScript と同梱されています。受信側にも同じコンパイル済みプロファイルとハッシュを渡し、ブラウザと受信側の設定を一緒に配備します。[独立したブラウザサンプル](../../examples/browser/)は上記の公開パスを使い、CI ではアーカイブを展開して動作を検証します。
@@ -84,7 +82,6 @@ export async function createSearchTracking(obtainWriteToken) {
     profile,
     profileHash,
     queue: createQueuedDelivery({ profile, profileHash, sendBatch, parallelBatches: 2 }),
-    loadWasm: async () => (await asset("session.wasm")).arrayBuffer(),
   });
   const search = createSearchMeasurement(collector);
 
@@ -98,6 +95,8 @@ export async function createSearchTracking(obtainWriteToken) {
   };
 }
 ```
+
+v0.2.0 から移行する場合は、`loadWasm` オプションと旧セッションモジュールを取り除きます。既存の呼び出しでこのオプションにコールバックが渡されても、SDK は受理したうえで無視します。
 
 ## 4. アプリケーションの3か所から収集 API を呼ぶ
 

@@ -43,13 +43,6 @@ const receive = createHttpReceiver(
 const files = new Map([
 	["/", ["./index.html", "text/html; charset=utf-8"]],
 	[
-		"/session.wasm",
-		[
-			"../target/wasm32-unknown-unknown/release/liatris_session.wasm",
-			"application/wasm",
-		],
-	],
-	[
 		"/assets/demo/browser.js",
 		["../dist/demo/demo/browser.js", "text/javascript"],
 	],
@@ -79,7 +72,7 @@ for (const name of [
 
 const pagePolicy = [
 	"default-src 'none'",
-	"script-src 'self' 'wasm-unsafe-eval'",
+	"script-src 'self'",
 	"connect-src 'self'",
 	"base-uri 'none'",
 	"form-action 'self'",

@@ -96,17 +96,18 @@ async function loadSite(directory: string) {
 		["/assets/liatris/profile.json", { type: "application/json", body: json }],
 		["/assets/liatris/profile.sha256", { type: "text/plain", body: hash }],
 	]);
-	for (const file of await readdir(sdk)) {
-		const type = file.endsWith(".js")
-			? "text/javascript"
-			: file === "session.wasm"
-				? "application/wasm"
-				: undefined;
-		if (type)
-			assets.set(`/assets/liatris/${file}`, {
-				type,
-				body: await readFile(join(sdk, file)),
-			});
+	const files = await readdir(sdk);
+	assert.ok(
+		files.every((file) =>
+			/^(?:[a-z-]+\.(?:js|d\.ts)|LICENSE|package\.json)$/.test(file),
+		),
+	);
+	for (const file of files) {
+		if (!file.endsWith(".js")) continue;
+		assets.set(`/assets/liatris/${file}`, {
+			type: "text/javascript",
+			body: await readFile(join(sdk, file)),
+		});
 	}
 	return { assets, profile, hash };
 }
@@ -146,7 +147,7 @@ test("an independent site captures a search using only the extracted SDK", {
 			.writeHead(200, {
 				"content-type": asset.type,
 				"content-security-policy":
-					"default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'",
+					"default-src 'none'; script-src 'self'; connect-src 'self'",
 			})
 			.end(asset.body);
 	});

@@ -43,7 +43,7 @@ The Compose test submits a single event and a batch through the reference HTTP r
 
 ## Verification
 
-For browser delivery tests, build the WASM with `mise run wasm`, install Chromium, Firefox and WebKit with `npx playwright install chromium firefox webkit`, and run `npm run test:browser`. The suite checks lost acknowledgements, storage across reloads, revocation from another tab, priority under impression pressure, partial receipts and migration of the previous queue format, offline recovery, 429 backoff, quota recovery and delivery after a suspended page becomes visible. Capturing new events while offline requires the page to have already loaded the session WASM.
+For browser delivery tests, install Chromium, Firefox and WebKit with `npx playwright install chromium firefox webkit` and run `npm run test:browser`. The suite checks lost acknowledgements, storage across reloads, revocation from another tab, priority under impression pressure, partial receipts and migration of the previous queue format, offline recovery, 429 backoff, quota recovery and delivery after a suspended page becomes visible. It also checks that after the page and SDK have loaded, the first event can be queued while offline and a session persisted by v0.2.0 can be reused.
 
 ## Performance under impression bursts
 

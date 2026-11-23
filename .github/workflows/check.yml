@@ -26,7 +26,6 @@ jobs:
       - uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
         with:
           version: "2026.11.8"
-      - run: rustup show active-toolchain
       - run: mise exec -- npm ci
       - run: mise exec -- npm audit --audit-level=high
       - run: mise run check
@@ -53,22 +52,6 @@ jobs:
       - run: docker compose -f integration/kinesis/compose.yaml up --build --abort-on-container-exit --exit-code-from verification
       - if: always()
         run: docker compose -f integration/kinesis/compose.yaml down --volumes
-
-  event-core-experiment:
-    name: Verify the Rust projection experiment
-    if: github.ref_type != 'tag'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
-        with:
-          version: "2026.11.8"
-      - run: rustup show active-toolchain
-      - run: mise exec -- npm ci
-      - run: mise run event-core:check
 
   release:
     name: Publish verified SDK
@@ -106,4 +89,4 @@ jobs:
         run: |
           gh release create "$RELEASE_TAG" release/liatris-browser.tar.gz release/SHA256SUMS \
             --verify-tag --title "$RELEASE_TAG" \
-            --notes 'Browser SDK with Rust/WASM session handling and durable HTTP/JSON delivery. See the integration guide for setup and receiver requirements.'
+            --notes 'TypeScript browser SDK with session handling and durable HTTP/JSON delivery. See the integration guide for setup and receiver requirements.'

@@ -14,10 +14,6 @@ execFileSync("tsc", ["-p", "tsconfig.sdk.json"], {
 	stdio: "inherit",
 });
 
-await copyFile(
-	new URL("target/wasm32-unknown-unknown/release/liatris_session.wasm", root),
-	new URL("session.wasm", files),
-);
 await copyFile(new URL("LICENSE", root), new URL("LICENSE", files));
 
 const { version, license } = JSON.parse(

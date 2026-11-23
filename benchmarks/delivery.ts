@@ -11,28 +11,19 @@ console.log(
 		cores: cpus().length,
 	}),
 );
-if (mode === "server-batch-native") {
-	const hook = await import("../experiments/event-core/ts/native-hook.ts");
-	const receiver = await import("./receiver.ts");
-	if (!hook.active) throw new Error("native projection hook did not load");
-	await receiver.benchmarkReceiver(true);
-} else if (mode === "server" || mode === "server-batch")
+if (mode === "server" || mode === "server-batch")
 	await (await import("./receiver.ts")).benchmarkReceiver(
 		mode === "server-batch",
 	);
-else if (mode === "browser" || mode === "browser-rust")
-	await (await import("./browser.ts")).benchmarkBrowser(
-		mode === "browser-rust",
+else if (mode === "browser")
+	await (await import("./browser.ts")).benchmarkBrowser();
+else if (mode === "browser-session")
+	await (await import("./session-comparison.ts")).benchmarkSessionComparison(
+		process.argv[3],
 	);
-else if (mode === "event-projection")
-	await (
-		await import("../experiments/event-core/ts/benchmark.ts")
-	).benchmarkProjection();
-else if (mode === "session-replay")
-	await (await import("./session-replay.ts")).benchmarkSessionReplay();
 else if (mode === "forwarder")
 	await (await import("./forwarder.ts")).benchmarkForwarder();
 else
 	throw new Error(
-		"usage: node benchmarks/delivery.ts server|server-batch|server-batch-native|browser|browser-rust|event-projection|session-replay|forwarder",
+		"usage: node benchmarks/delivery.ts server|server-batch|browser|browser-session <v0.2.0 SDK directory>|forwarder",
 	);

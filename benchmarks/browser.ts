@@ -4,37 +4,19 @@ import { chromium, firefox, webkit } from "playwright";
 import type { Envelope } from "../src/records.ts";
 import { compiled, percentile } from "./fixtures.ts";
 
-export async function benchmarkBrowser(useRust = false) {
+type Options = { referenceSdk?: URL; wasmDelayMs?: number };
+
+export async function benchmarkBrowser({
+	referenceSdk,
+	wasmDelayMs,
+}: Options = {}) {
 	const origin = "https://liatris-benchmark.test";
 	const { profile, sha256 } = compiled;
-	const wasm = await readFile(
-		new URL(
-			"../target/wasm32-unknown-unknown/release/liatris_session.wasm",
-			import.meta.url,
-		),
-	);
-	const root = new URL("../dist/demo/src/", import.meta.url);
-	const experiment = useRust
-		? {
-				module: await readFile(
-					new URL(
-						"../experiments/event-core/target/wasm32-unknown-unknown/release/liatris_event_core_experiment.wasm",
-						import.meta.url,
-					),
-				),
-				shim: await readFile(
-					new URL(
-						"../experiments/event-core/ts/browser-records.js",
-						import.meta.url,
-					),
-				),
-				files: new URL(
-					"../dist/event-core/experiments/event-core/ts/",
-					import.meta.url,
-				),
-			}
-		: undefined;
-	const scenarios = [
+	const compare = wasmDelayMs !== undefined;
+	const root = referenceSdk ?? new URL("../dist/demo/src/", import.meta.url);
+	const wasm =
+		referenceSdk && (await readFile(new URL("session.wasm", referenceSdk)));
+	const allScenarios = [
 		{ cards: 40, delayMs: 0 },
 		{ cards: 40, delayMs: 40 },
 		{ cards: 100, delayMs: 0 },
@@ -42,6 +24,7 @@ export async function benchmarkBrowser(useRust = false) {
 		{ cards: 100, delayMs: 150 },
 		{ cards: 250, delayMs: 40 },
 	];
+	const scenarios = compare ? [allScenarios[0], allScenarios[5]] : allScenarios;
 	for (const engine of [chromium, firefox, webkit]) {
 		const browser = await engine.launch();
 		try {
@@ -52,6 +35,7 @@ export async function benchmarkBrowser(useRust = false) {
 				try {
 					let posts = 0;
 					let maxBatch = 0;
+					let wasmRequests = 0;
 					await page.route(`${origin}/**`, async (route) => {
 						const path = new URL(route.request().url()).pathname;
 						if (path === "/")
@@ -59,11 +43,15 @@ export async function benchmarkBrowser(useRust = false) {
 								contentType: "text/html",
 								body: "<main></main>",
 							});
-						if (path === "/session.wasm")
+						if (path === "/session.wasm") {
+							wasmRequests++;
+							if (!wasm) throw new Error("TypeScript collector requested WASM");
+							if (wasmDelayMs) await sleep(wasmDelayMs);
 							return route.fulfill({
 								contentType: "application/wasm",
 								body: wasm,
 							});
+						}
 						if (path === "/api/ubi") {
 							const records = route.request().postDataJSON() as Envelope[];
 							posts++;
@@ -77,38 +65,6 @@ export async function benchmarkBrowser(useRust = false) {
 								})),
 							});
 						}
-						if (experiment) {
-							if (path === "/event-core.wasm")
-								return route.fulfill({
-									contentType: "application/wasm",
-									body: experiment.module,
-								});
-							if (path === "/records.js")
-								return route.fulfill({
-									contentType: "text/javascript",
-									body: experiment.shim,
-								});
-							if (path === "/records-reference.js")
-								return route.fulfill({
-									contentType: "text/javascript",
-									body: await readFile(new URL("records.js", root)),
-								});
-							if (path === "/src/fields.js")
-								return route.fulfill({
-									contentType: "text/javascript",
-									body: await readFile(new URL("fields.js", root)),
-								});
-							if (
-								path === "/experiment/projection.js" ||
-								path === "/experiment/wasm-adapter.js"
-							)
-								return route.fulfill({
-									contentType: "text/javascript",
-									body: await readFile(
-										new URL(path.slice(12), experiment.files),
-									),
-								});
-						}
 						if (/^\/[a-z-]+\.js$/.test(path)) {
 							return route.fulfill({
 								contentType: "text/javascript",
@@ -119,7 +75,7 @@ export async function benchmarkBrowser(useRust = false) {
 					});
 					await page.goto(origin);
 					const measurement = await page.evaluate(
-						async ({ profile, sha256, cards }) => {
+						async ({ profile, sha256, cards, compare, reference }) => {
 							const loading = performance.now();
 							const [collectorModule, queueModule, exposureModule] =
 								await Promise.all([
@@ -138,6 +94,7 @@ export async function benchmarkBrowser(useRust = false) {
 								profile.endpoint,
 							);
 							const receipts: { time: number; click: boolean }[] = [];
+							const firstReceipt = Promise.withResolvers<number>();
 							const starting = performance.now();
 							const queue = queueModule.createQueuedDelivery({
 								profile,
@@ -152,7 +109,10 @@ export async function benchmarkBrowser(useRust = false) {
 									);
 									const time = performance.now() - starting;
 									for (const event of events) {
-										if (accepted.has(event.event_id))
+										if (!accepted.has(event.event_id)) continue;
+										if (event.payload.action_name === "add_cart")
+											firstReceipt.resolve(time);
+										else
 											receipts.push({
 												time,
 												click: event.payload.action_name === "click",
@@ -165,12 +125,39 @@ export async function benchmarkBrowser(useRust = false) {
 								profile,
 								profileHash: sha256,
 								queue,
-								async loadWasm() {
-									const response = await fetch("/session.wasm");
-									return response.arrayBuffer();
-								},
+								...(reference
+									? {
+											async loadWasm() {
+												const response = await fetch("/session.wasm");
+												if (!response.ok)
+													throw new Error("reference WASM could not be loaded");
+												return response.arrayBuffer();
+											},
+										}
+									: {}),
 							});
 							await collector.setConsent(true);
+							let firstEnqueueMs: number | undefined;
+							let firstAckMs: number | undefined;
+							if (compare) {
+								const firstAt = performance.now() - starting;
+								if ((await collector.trackEvent("add_cart")) !== "queued")
+									throw new Error("first event was not queued");
+								firstEnqueueMs = performance.now() - starting - firstAt;
+								const deadline = AbortSignal.timeout(10_000);
+								const acknowledged = await Promise.race([
+									firstReceipt.promise,
+									new Promise<never>((_, reject) =>
+										deadline.addEventListener(
+											"abort",
+											() =>
+												reject(new Error("first event was not acknowledged")),
+											{ once: true },
+										),
+									),
+								]);
+								firstAckMs = acknowledged - firstAt;
+							}
 							const burstAt = performance.now();
 							const latencies: number[] = [];
 							const tasks: Promise<unknown>[] = [];
@@ -261,6 +248,8 @@ export async function benchmarkBrowser(useRust = false) {
 							const click = receipts.find((receipt) => receipt.click);
 							return {
 								moduleLoadMs,
+								firstEnqueueMs,
+								firstAckMs,
 								clickAckMs: click ? click.time - clickAt : null,
 								accepted: latencies.length,
 								dropped,
@@ -271,10 +260,18 @@ export async function benchmarkBrowser(useRust = false) {
 									.map(({ time }) => time - (burstAt - starting)),
 							};
 						},
-						{ ...scenario, profile, sha256 },
+						{
+							...scenario,
+							profile,
+							sha256,
+							compare,
+							reference: Boolean(referenceSdk),
+						},
 					);
 					const {
 						moduleLoadMs,
+						firstEnqueueMs,
+						firstAckMs,
 						accepted,
 						dropped,
 						clickQueued,
@@ -282,10 +279,16 @@ export async function benchmarkBrowser(useRust = false) {
 						latencies,
 						receipts,
 					} = measurement;
+					if (wasmRequests !== (referenceSdk ? 1 : 0))
+						throw new Error("unexpected session asset requests");
 					console.log(
 						JSON.stringify({
 							stage: "browser",
-							backend: useRust ? "rust-wasm" : "typescript",
+							backend: referenceSdk ? "v0.2.0-wasm" : "typescript",
+							wasmDelayMs,
+							wasmRequests,
+							firstEnqueueMs,
+							firstAckMs,
 							moduleLoadMs,
 							engine: engine.name(),
 							version: browser.version(),

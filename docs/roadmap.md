@@ -4,11 +4,11 @@
 
 | Milestone | Scope | Acceptance criteria |
 | --- | --- | --- |
-| M0 · Collector foundation · complete | Compile JSON, YAML and TOML profiles, use a Rust/WASM inactivity policy, and accept a query and click through a local UBI receiver. | Equivalent inputs yield the same profile hash. Query and click correlate by query and session IDs. Strict and compatibility mode fixtures exercise the pinned UBI schemas. |
+| M0 · Collector foundation · complete | Compile JSON, YAML and TOML profiles, apply a configurable session inactivity policy, and accept a query and click through a local UBI receiver. | Equivalent inputs yield the same profile hash. Query and click correlate by query and session IDs. Strict and compatibility mode fixtures exercise the pinned UBI schemas. |
 | M1 · Card impressions · acceptance tests include mobile profiles | Let the host register result cards. Configure minimum visible area and session inactivity. Link impressions and clicks to the same displayed result set. | Verify the inclusive 50% boundary, a custom threshold, foreground behavior, and one impression per rank and result set. Verify consent and clipping in Chromium, Firefox, WebKit and a mobile profile. |
 | M2 · Search measurement · initial capture implemented | Record text-free search submissions, rendered result sets including zero, the ranking version and time to first click. | Join search, displayed set, impression and click without assigning stale responses to the latest query. Replay fixtures for zero results, visible results with no clicks, two result sets for one query, and reordered cards. Show separate query, visible impression and click denominators. |
 | M3 · Reliable delivery and consent · reference path and failure tests implemented | Add a bounded persistent queue, stable event IDs, receiver deduplication and acknowledgements after durable acceptance. Apply consent changes to the queue and active capture across tabs. | Test offline recovery, lost responses, throttling, quota errors, page backgrounding and consent revocation. Retry with unchanged IDs and capture context. Record the reason for dropped items without including their payloads. |
-| M4 · HTTP/JSON SDK and streaming example | Package browser modules, declarations and WASM, document host event hooks and include a server-side streaming adapter example. | Replay the search-to-click flow from an extracted SDK, verify acceptance and retry contracts, and publish the checked archive with its checksum after CI. |
+| M4 · HTTP/JSON SDK and streaming example | Package browser modules and declarations, document host event hooks and include a server-side streaming adapter example. | Replay the search-to-click flow from an extracted SDK, verify acceptance and retry contracts, and publish the checked archive with its checksum after CI. |
 | M5 · Privacy-preserving aggregate experiments | Evaluate aggregate-only reporting separately when an actual sharing use case has been identified. Consider DAP where independent aggregation parties can be operated. | Define what the shared metrics must answer, the threat model and permitted privacy loss. Compare utility and operational cost with the existing aggregate pipeline before adding a protocol. |
 
 Recent click-log studies motivate recording the displayed list and exposure independently of clicks in M2. Statistical bias correction and ranking models belong downstream, where experiments and denominators are available. [Baidu click-log study](https://arxiv.org/abs/2404.02543) · [Query-level click propensity study](https://arxiv.org/abs/2502.11414)
@@ -19,11 +19,11 @@ M2 includes opt-in duration metrics and tests for inactivity and missing observa
 
 See [search interaction log analysis](log-analysis.md) for unbiased ranking, dense retrieval training, and session-level experiments.
 
-## Event projection experiment
+## TypeScript runtime
 
-The Rust prototype runs the same profile rules as WASM in the browser and as a native Node-API addon at intake. The test corpus covers nested fields, UTF-16 string lengths, integer limits and host-only inputs that use the existing TypeScript path. The receiver still applies the pinned UBI schema and authentication.
+Liatris runs event validation, record construction and session management in TypeScript. A Rust prototype for validation and record construction added browser startup work and reduced intake throughput in the local eight-request concurrency test.
 
-With 250 local impressions and a simulated 40 ms response delay, the median of the per-run receipt p95 was 215 ms with TypeScript and 211 ms with the WASM prototype. The prototype increased module-loading time and reduced intake throughput from about 45,300 to 36,100 events per second at eight concurrent HTTP requests. The normal collector and receiver retain their TypeScript projection. The existing session-boundary WASM continues to ship. [Reproduce the experiment](../experiments/event-core/README.md)
+The TypeScript session policy matched the v0.2.0 WASM implementation across 11,575 cases. In local Chromium, Firefox and WebKit runs with 250 impressions and a simulated 40 ms API response delay, the median of the per-run receipt p95 was 201 ms with v0.2.0 and 203 ms with TypeScript. Median time to queue the first event fell from 3.0 ms to 1.4 ms with no added WASM fetch delay, and from 44.0 ms to 1.5 ms with 40 ms of simulated WASM fetch delay. [Benchmark procedure](../benchmarks/README.md#compare-session-startup-against-v020)
 
 ## Optional transport
 
@@ -33,6 +33,6 @@ Evaluate gRPC once a destination requires it. Use unary gRPC-Web for browser-to-
 
 - **M2.** Capture search metrics without raw query text by default. Review each new field's purpose, data classification, destination and retention. Include proxy, application, debugging and backup paths in retention and deletion reviews.
 - **M3.** Test cross-tab revocation and cleanup of identifiers and queued records, including failures. Preserve capture IDs on retries while bounding queue time and size. Apply request and concurrency limits before expensive verification and quotas per authenticated tenant. Reauthorize retries and confirm that authentication material never enters queue or sink logs.
-- **M4.** Integrate a trusted credential issuer or store, enforce scoped credentials and key rotation, and verify the deployment's TLS and CORS settings. For external intake, test replay and abuse controls independently of token validity. Verify the SDK and WASM distribution, any bundled script loader, and dependency and runtime patch checks.
+- **M4.** Integrate a trusted credential issuer or store, enforce scoped credentials and key rotation, and verify the deployment's TLS and CORS settings. For external intake, test replay and abuse controls independently of token validity. Verify the packaged SDK, any bundled script loader, and dependency and runtime patch checks.
 
 See [security and privacy](security.md) for the current controls and integration boundaries.

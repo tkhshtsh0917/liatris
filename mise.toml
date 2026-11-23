@@ -1,28 +1,9 @@
 [tools]
 node = "24.22.3"
 
-[tasks.wasm]
-run = "cargo build --locked --release --target wasm32-unknown-unknown"
-
 [tasks.check]
 run = [
-  "cargo fmt --all --check",
-  "cargo clippy --locked --all-targets -- -D warnings",
-  "cargo clippy --locked --target wasm32-unknown-unknown -- -D warnings",
-  "cargo test --locked",
-  "mise run wasm",
   "npm run lint",
   "npm run typecheck",
   "npm test",
-]
-
-[tasks."event-core:check"]
-run = [
-  "cargo fmt --manifest-path experiments/event-core/Cargo.toml --all --check",
-  "cargo clippy --locked --manifest-path experiments/event-core/Cargo.toml --all-targets -- -D warnings",
-  "cargo clippy --locked --manifest-path experiments/event-core/Cargo.toml --features native-addon --lib -- -D warnings",
-  "cargo clippy --locked --manifest-path experiments/event-core/Cargo.toml --target wasm32-unknown-unknown -- -D warnings",
-  "cargo test --locked --manifest-path experiments/event-core/Cargo.toml",
-  "npm run experiment:build",
-  "npm run experiment:test",
 ]

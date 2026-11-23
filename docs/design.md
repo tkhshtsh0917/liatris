@@ -4,7 +4,7 @@
 
 ## Collection and event contracts
 
-A TypeScript host handles application calls, the browser clock, Web Crypto, IndexedDB, and delivery. Rust/WASM decides when the session expires. Integrations add events through profile declarations and the TypeScript collector API. The application declares event names and fields in JSON, YAML, or TOML and calls `trackQuery` and `trackEvent` at domain-specific points. The compiler produces equivalent normalized JSON and a SHA-256 profile identifier for the browser and receiver. A site must explicitly enable query text capture.
+The TypeScript collector handles application calls, session expiry, the browser clock, Web Crypto, IndexedDB, and delivery. Integrations add events through profile declarations and the TypeScript collector API. The application declares event names and fields in JSON, YAML, or TOML and calls `trackQuery` and `trackEvent` at domain-specific points. The compiler produces equivalent normalized JSON and a SHA-256 profile identifier for the browser and receiver. A site must explicitly enable query text capture.
 
 The profile declares fields and validation rules. The host defines event triggers and supplies the corresponding values. An optional script tag can load the collector. The integration still supplies the business events and registers elements for impression tracking. For a conversion such as a successful purchase, use the confirmation from the system that recorded it.
 
