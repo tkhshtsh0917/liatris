@@ -17,9 +17,11 @@ if (mode === "server" || mode === "server-batch")
 	);
 else if (mode === "browser")
 	await (await import("./browser.ts")).benchmarkBrowser();
+else if (mode === "session-replay")
+	await (await import("./session-replay.ts")).benchmarkSessionReplay();
 else if (mode === "forwarder")
 	await (await import("./forwarder.ts")).benchmarkForwarder();
 else
 	throw new Error(
-		"usage: node benchmarks/delivery.ts server|server-batch|browser|forwarder",
+		"usage: node benchmarks/delivery.ts server|server-batch|browser|session-replay|forwarder",
 	);
