@@ -12,6 +12,7 @@ import type { Envelope } from "../../src/records.ts";
 import { registerBatchingTests } from "./batching.ts";
 import { registerImpressionTests } from "./impressions.ts";
 import { registerRecoveryTests } from "./recovery.ts";
+import { registerWithdrawalTests } from "./withdrawal.ts";
 
 const port = process.env.LIATRIS_BROWSER_TEST_PORT ?? "42881";
 const origin = `http://127.0.0.1:${port}`;
@@ -426,5 +427,6 @@ test("migrates v1 records and consent, honoring the UTF-8 batch byte limit", {
 });
 
 registerRecoveryTests(origin);
+registerWithdrawalTests(origin);
 registerImpressionTests(origin);
 registerBatchingTests(origin);

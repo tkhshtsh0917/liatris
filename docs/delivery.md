@@ -12,7 +12,9 @@ The current integration example sets `parallelBatches: 2` to send two disjoint b
 
 Concurrent captures share IndexedDB write transactions of up to 32 events. Each event reports `queued` after the transaction commits. Concurrent activity is evaluated in capture order, then only the final session state is written. The consent generation is checked before the write.
 
-Tabs share a consent generation, session and queue in IndexedDB. Withdrawal first saves a new generation without a session and marks queued data for deletion. Tabs that receive the notice abort active delivery. Late callbacks recheck the generation before updating storage. A second transaction deletes the queued events and clears the marker. If deletion fails, the marker survives reload. A new grant must finish deletion before it can start delivery. A request that already reached the collector service may have been accepted. Removal of received data is a server-side operation.
+Tabs share a consent generation, session and queue in IndexedDB. Withdrawal reads the current generation and notifies open tabs before saving a new generation without a session and marking queued data for deletion. Tabs with the matching grant abort active delivery even if the write fails. If one of those tabs grants consent again while IndexedDB still holds that generation, it clears the old queue and starts a new generation before resuming delivery. A retry for an earlier generation leaves a newer grant in place.
+
+After the withdrawal marker is saved, a second transaction deletes the queued events and clears the marker. If deletion fails, the marker survives reload. A new grant must finish deletion before it can start delivery. Late callbacks recheck the generation before updating storage. The host must retain and retry a withdrawal that could not be recorded, including across reloads. A request that already reached the collector service may have been accepted. Removal of received data is a server-side operation.
 
 The storage upgrade preserves existing sessions and queued events. Once upgraded, the browser requires an SDK that understands the pending deletion marker to open the queue.
 

@@ -8,7 +8,6 @@ import {
 import type { Delivery } from "./collector.ts";
 import { HttpDeliveryError } from "./http-delivery.ts";
 import {
-	type ConsentState,
 	deliveryPriority,
 	openOutbox,
 	type QueuedEvent,
@@ -58,6 +57,8 @@ export function createQueuedDelivery({
 	let database: Promise<IDBDatabase> | undefined;
 	let channel: BroadcastChannel | undefined;
 	let active: Lease | undefined;
+	let withdrawnGeneration: string | undefined;
+	let withdrawalTarget: { generation: string | undefined } | undefined;
 	let pendingWithdrawal: string | undefined;
 	let writeGroup: { lease: Lease; writes: PendingWrite[] } | undefined;
 	const encoder = new TextEncoder();
@@ -351,8 +352,10 @@ export function createQueuedDelivery({
 				active &&
 				message.data?.scope === scope &&
 				message.data.generation === active.generation
-			)
+			) {
+				withdrawnGeneration = active.generation;
 				stop();
+			}
 		};
 	}
 
@@ -374,8 +377,16 @@ export function createQueuedDelivery({
 				await open(),
 				scope,
 				async (state, outbox) => {
-					if (state?.cleanupPending) await outbox.removeAll();
-					else if (state) return state;
+					if (state) {
+						if (
+							!state.cleanupPending &&
+							state.generation !== withdrawnGeneration
+						)
+							return state;
+
+						// The notice can arrive even if IndexedDB still has the old grant.
+						await outbox.removeAll();
+					}
 
 					const created = { generation: crypto.randomUUID() };
 					outbox.setConsent(created);
@@ -392,6 +403,7 @@ export function createQueuedDelivery({
 			});
 			if (!active)
 				throw new Error("collection consent was withdrawn during setup");
+			withdrawnGeneration = undefined;
 			return active.controller.signal;
 		},
 
@@ -404,26 +416,38 @@ export function createQueuedDelivery({
 				// Commit the new generation before deletion so a failed purge cannot
 				// make the previous session and its events eligible for replay.
 				const withdrawal = await updateOutbox(db, scope, (state, outbox) => {
-					if (state?.cleanupPending) return { generation: state.generation };
+					// A retry after a failed write still targets the original grant.
+					if (
+						withdrawalTarget &&
+						withdrawalTarget.generation !== state?.generation
+					)
+						return;
+					if (state?.cleanupPending) return state.generation;
+
+					withdrawalTarget = { generation: state?.generation };
+					// Stop other tabs even if the following IndexedDB write fails.
+					if (state)
+						channel?.postMessage({ scope, generation: state.generation });
 
 					const generation = crypto.randomUUID();
 					outbox.setConsent({ generation, cleanupPending: true });
-					return { generation, previous: state?.generation };
+					return generation;
 				});
-				pendingWithdrawal = withdrawal.generation;
-				if (withdrawal.previous)
-					channel?.postMessage({ scope, generation: withdrawal.previous });
+				pendingWithdrawal = withdrawal;
 			}
 
 			const generation = pendingWithdrawal;
-			await updateOutbox(db, scope, async (state, outbox) => {
-				// Another tab may already have cleaned up before enabling collection.
-				if (!state?.cleanupPending || state.generation !== generation) return;
+			if (generation !== undefined) {
+				await updateOutbox(db, scope, async (state, outbox) => {
+					// Another tab may already have cleaned up before enabling collection.
+					if (!state?.cleanupPending || state.generation !== generation) return;
 
-				await outbox.removeAll();
-				outbox.setConsent({ generation });
-			});
+					await outbox.removeAll();
+					outbox.setConsent({ generation });
+				});
+			}
 			pendingWithdrawal = undefined;
+			withdrawalTarget = undefined;
 		},
 
 		/** Shares the session transaction with the same persisted consent generation. */
