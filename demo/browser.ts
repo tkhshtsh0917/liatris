@@ -46,6 +46,7 @@ function element<T extends Element>(selector: string): T {
 
 const consent = element<HTMLInputElement>("#consent");
 const consentStatus = element<HTMLParagraphElement>("#consent-status");
+const retryWithdrawal = element<HTMLButtonElement>("#retry-withdrawal");
 const form = element<HTMLFormElement>("#search");
 const searchTerm = element<HTMLSelectElement>("#term");
 const results = element<HTMLUListElement>("#results");
@@ -194,24 +195,49 @@ function showConsent(message?: string) {
 		(consent.checked ? "Collection enabled." : "Collection disabled.");
 }
 
-consent.addEventListener("change", async () => {
-	consent.disabled = true;
+let updatingConsent = false;
+
+/** Applies an explicit choice and keeps failed withdrawals available for retry. */
+async function updateConsent(granted: boolean) {
+	updatingConsent = true;
+	consent.setAttribute("aria-disabled", "true");
+	retryWithdrawal.setAttribute("aria-disabled", "true");
+
 	try {
-		await collector.setConsent(consent.checked);
+		await collector.setConsent(granted);
 		collector.consentSignal?.addEventListener(
 			"abort",
 			() => {
 				stopResultTracking();
-				if (!consent.disabled) showConsent();
+				if (!updatingConsent) showConsent();
 			},
 			{ once: true },
 		);
+		if (document.activeElement === retryWithdrawal) consent.focus();
+		retryWithdrawal.hidden = true;
 		showConsent();
 	} catch {
-		showConsent("Could not update collection consent.");
+		retryWithdrawal.hidden = granted;
+		showConsent(
+			granted
+				? "Could not enable collection."
+				: "Could not complete withdrawal.",
+		);
 	} finally {
-		consent.disabled = false;
+		updatingConsent = false;
+		retryWithdrawal.removeAttribute("aria-disabled");
+		if (retryWithdrawal.hidden) consent.removeAttribute("aria-disabled");
 	}
+}
+
+consent.addEventListener("click", (event) => {
+	if (updatingConsent || !retryWithdrawal.hidden) event.preventDefault();
+});
+consent.addEventListener("change", () => {
+	void updateConsent(consent.checked);
+});
+retryWithdrawal.addEventListener("click", () => {
+	if (!updatingConsent) void updateConsent(false);
 });
 consent.disabled = false;
 

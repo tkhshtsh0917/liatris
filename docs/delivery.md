@@ -12,7 +12,9 @@ The current integration example sets `parallelBatches: 2` to send two disjoint b
 
 Concurrent captures share IndexedDB write transactions of up to 32 events. Each event reports `queued` after the transaction commits. Concurrent activity is evaluated in capture order, then only the final session state is written. The consent generation is checked before the write.
 
-Tabs share a consent generation, session and queue in IndexedDB. A withdrawal deletes the session and pending events in one transaction, changes the generation, and aborts active delivery in tabs that receive the notice. Late callbacks recheck the generation before updating storage. A request that already reached the collector service may have been accepted. Removal of received data is a server-side operation.
+Tabs share a consent generation, session and queue in IndexedDB. Withdrawal first saves a new generation without a session and marks queued data for deletion. Tabs that receive the notice abort active delivery. Late callbacks recheck the generation before updating storage. A second transaction deletes the queued events and clears the marker. If deletion fails, the marker survives reload. A new grant must finish deletion before it can start delivery. A request that already reached the collector service may have been accepted. Removal of received data is a server-side operation.
+
+The storage upgrade preserves existing sessions and queued events. Once upgraded, the browser requires an SDK that understands the pending deletion marker to open the queue.
 
 A batch is a JSON array sent as `application/vnd.liatris.batch+json`. Each request is limited to 32 records and 128 KiB, and each record to 32 KiB. A valid batch request receives HTTP 200 with exactly one receipt per submitted `event_id`. An invalid batch structure, such as duplicate event IDs, receives HTTP 400.
 

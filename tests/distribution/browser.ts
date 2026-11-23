@@ -157,8 +157,15 @@ test("an independent site captures a search using only the extracted SDK", {
 		const context = await browser.newContext();
 		const page = await context.newPage();
 		await page.goto(origin);
-		await page.getByRole("checkbox").check();
+		await page.locator("#consent:enabled").waitFor();
+		const consent = page.getByRole("checkbox");
+		await consent.focus();
+		await page.keyboard.press("Space");
 		await page.getByText("Collection enabled.", { exact: true }).waitFor();
+		assert.equal(
+			await consent.evaluate((box) => document.activeElement === box),
+			true,
+		);
 		await page.getByRole("button", { name: "Search for account help" }).click();
 		await page.getByRole("button", { name: "Reset your password" }).click();
 
@@ -196,10 +203,32 @@ test("an independent site captures a search using only the extracted SDK", {
 		const peerConsent = peer.getByRole("checkbox");
 		await peerConsent.check();
 		await peer.getByText("Collection enabled.", { exact: true }).waitFor();
-		await peerConsent.uncheck();
+		await peer.evaluate(() => {
+			const getAllKeys = IDBIndex.prototype.getAllKeys;
+			IDBIndex.prototype.getAllKeys = function (...args) {
+				if (this.name === "scope") {
+					IDBIndex.prototype.getAllKeys = getAllKeys;
+					throw new DOMException(
+						"simulated queue deletion failure",
+						"UnknownError",
+					);
+				}
+				return getAllKeys.apply(this, args);
+			};
+		});
+		await peerConsent.focus();
+		await peer.keyboard.press("Space");
+		await peer.getByText("Could not complete withdrawal.").waitFor();
+		assert.equal(
+			await peerConsent.evaluate((box) => document.activeElement === box),
+			true,
+		);
+
 		await page.getByText("Collection disabled.", { exact: true }).waitFor();
-		const consent = page.getByRole("checkbox");
 		assert.equal(await consent.isChecked(), false);
+		await peer.getByRole("button", { name: "Retry withdrawal" }).click();
+		await peer.getByText("Collection disabled.", { exact: true }).waitFor();
+
 		await consent.check();
 		await page.getByText("Collection enabled.", { exact: true }).waitFor();
 

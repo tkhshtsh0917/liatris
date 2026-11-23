@@ -22,8 +22,149 @@ async function openSearch(page: Page, origin: string) {
 	return page.getByRole("button", { name: "Search", exact: true });
 }
 
+async function failQueueDeletion(page: Page) {
+	await page.evaluate(() => {
+		const getAllKeys = IDBIndex.prototype.getAllKeys;
+		IDBIndex.prototype.getAllKeys = function (...args) {
+			if (this.name === "scope")
+				throw new DOMException(
+					"simulated queue deletion failure",
+					"UnknownError",
+				);
+
+			return getAllKeys.apply(this, args);
+		};
+	});
+}
+
+function pendingRecords(page: Page) {
+	return page.evaluate(async () => {
+		const { openOutbox } = (await import(
+			"/assets/src/outbox-storage.js" as string
+		)) as typeof import("../../src/outbox-storage.ts");
+		const db = await openOutbox();
+		try {
+			return await new Promise<{ record: Envelope }[]>((resolve, reject) => {
+				const request = db.transaction("outbox").objectStore("outbox").getAll();
+				request.onsuccess = () => resolve(request.result);
+				request.onerror = () => reject(request.error);
+			});
+		} finally {
+			db.close();
+		}
+	});
+}
+
+function registerWithdrawalRecoveryTest(
+	origin: string,
+	engine: typeof chromium,
+) {
+	test(`${engine.name()} blocks replay after failed withdrawal and preserves a newer grant on retry`, {
+		timeout: 30_000,
+	}, async () => {
+		const browser = await engine.launch();
+		try {
+			const context = await browser.newContext();
+			const first = await context.newPage();
+			const peer = await context.newPage();
+			const search = await openSearch(peer, origin);
+			await first.goto(origin);
+			await first.locator("#consent:enabled").waitFor();
+			const consent = first.getByRole("checkbox");
+			await consent.focus();
+			await first.keyboard.press("Space");
+			await first.getByText("Collection enabled.", { exact: true }).waitFor();
+			assert.equal(
+				await consent.evaluate((box) => document.activeElement === box),
+				true,
+			);
+
+			let offline = true;
+			const delivered: Envelope[] = [];
+			await context.route("**/api/ubi", async (route) => {
+				if (offline) {
+					await route.fulfill({
+						status: 503,
+						headers: { "retry-after": "60" },
+					});
+				} else {
+					delivered.push(...postedEvents(route.request()));
+					await route.continue();
+				}
+			});
+			const sentOffline = peer.waitForResponse(
+				(response) =>
+					response.status() === 503 && !!submission(response.request()),
+			);
+			await search.click();
+			const old = submission((await sentOffline).request());
+			assert.ok(old);
+
+			await failQueueDeletion(first);
+			await first.keyboard.press("Space");
+			await first.getByText("Could not complete withdrawal.").waitFor();
+			assert.equal(
+				await consent.evaluate((box) => document.activeElement === box),
+				true,
+			);
+			await peer.getByText("Collection disabled.", { exact: true }).waitFor();
+			assert.ok(
+				(await pendingRecords(peer)).some(
+					({ record }) => record.event_id === old.event_id,
+				),
+			);
+
+			offline = false;
+			await peer.reload();
+			await failQueueDeletion(peer);
+			await peer.evaluate(() => {
+				const now = Date.now;
+				Date.now = () => now() + 120_000;
+			});
+			await peer.getByRole("checkbox").click();
+			await peer.getByText("Could not enable collection.").waitFor();
+			assert.equal(await peer.getByRole("checkbox").isChecked(), false);
+			assert.equal(delivered.length, 0);
+
+			await peer.reload();
+			await peer.getByRole("checkbox").check();
+			await peer.getByText("Collection enabled.", { exact: true }).waitFor();
+			assert.deepEqual(await pendingRecords(peer), []);
+
+			// The original page can finish its retry even while its deletion path
+			// is unavailable, because the peer has already removed the old queue.
+			const retry = first.getByRole("button", { name: "Retry withdrawal" });
+			await retry.focus();
+			await first.keyboard.press("Space");
+			await first.getByText("Collection disabled.", { exact: true }).waitFor();
+			assert.equal(
+				await consent.evaluate((box) => document.activeElement === box),
+				true,
+			);
+			assert.equal(await retry.isVisible(), false);
+
+			const accepted = peer.waitForResponse(
+				(response) =>
+					response.status() === 200 && !!submission(response.request()),
+			);
+			await search.click();
+			const fresh = submission((await accepted).request());
+			assert.ok(fresh);
+			assert.notEqual(fresh.payload.session_id, old.payload.session_id);
+			assert.ok(
+				delivered.every(
+					(event) => event.payload.query_id !== old.payload.query_id,
+				),
+			);
+		} finally {
+			await browser.close();
+		}
+	});
+}
+
 export function registerRecoveryTests(origin: string) {
 	for (const engine of [chromium, firefox, webkit]) {
+		registerWithdrawalRecoveryTest(origin, engine);
 		test(`${engine.name()} retries the same event after throttling`, {
 			timeout: 30_000,
 		}, async () => {
@@ -140,7 +281,7 @@ export function registerRecoveryTests(origin: string) {
 		}
 	});
 
-	test("reuses a session saved by the v0.2.0 storage format", {
+	test("upgrades v0.2.0 storage and preserves its session for the current SDK", {
 		timeout: 30_000,
 	}, async () => {
 		const browser = await chromium.launch();
@@ -148,28 +289,43 @@ export function registerRecoveryTests(origin: string) {
 			const page = await browser.newPage();
 			await page.goto(origin);
 			const expected = await page.evaluate(async () => {
-				const { openOutbox, updateOutbox } = (await import(
-					"/assets/src/outbox-storage.js" as string
-				)) as typeof import("../../src/outbox-storage.ts");
-				const db = await openOutbox();
 				const scope = JSON.stringify(["sample", "storefront"]);
 				const id = crypto.randomUUID();
 				const now = Date.now();
-				try {
-					await updateOutbox(db, scope, (_state, outbox) => {
-						outbox.setConsent({
-							generation: crypto.randomUUID(),
-							session: {
-								id,
-								number: 4,
-								startedAtMs: now - 1000,
-								lastActivityMs: now,
+				await new Promise<void>((resolve, reject) => {
+					const request = indexedDB.open("liatris-delivery", 2);
+					request.onerror = () => reject(request.error);
+					request.onsuccess = () => {
+						request.result.close();
+						resolve();
+					};
+					request.onupgradeneeded = () => {
+						const db = request.result;
+						db.createObjectStore("scopes").put(
+							{
+								generation: crypto.randomUUID(),
+								session: {
+									id,
+									number: 4,
+									startedAtMs: now - 1000,
+									lastActivityMs: now,
+								},
 							},
+							scope,
+						);
+						const outbox = db.createObjectStore("outbox", {
+							keyPath: ["scope", "record.event_id"],
 						});
-					});
-				} finally {
-					db.close();
-				}
+						outbox.createIndex("scope", "scope");
+						outbox.createIndex("expiry", ["scope", "expiresAt"]);
+						outbox.createIndex("ready", [
+							"scope",
+							"record.profile_hash",
+							"priority",
+							"nextAttempt",
+						]);
+					};
+				});
 				return id;
 			});
 			await page.getByRole("checkbox").check();
@@ -184,6 +340,18 @@ export function registerRecoveryTests(origin: string) {
 				submission((await receipt).request())?.payload.session_id,
 				expected,
 			);
+			const legacyOpen = await page.evaluate(
+				() =>
+					new Promise<string | undefined>((resolve) => {
+						const request = indexedDB.open("liatris-delivery", 2);
+						request.onerror = () => resolve(request.error?.name);
+						request.onsuccess = () => {
+							request.result.close();
+							resolve(undefined);
+						};
+					}),
+			);
+			assert.equal(legacyOpen, "VersionError");
 		} finally {
 			await browser.close();
 		}

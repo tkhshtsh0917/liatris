@@ -33,12 +33,14 @@ const collector = createCollector({
 const search = createSearchMeasurement(collector);
 const consent = document.querySelector("#consent");
 const consentStatus = document.querySelector("#consent-status");
+const retryWithdrawal = document.querySelector("#retry-withdrawal");
 const button = document.querySelector("#search");
 const results = document.querySelector("#results");
 const status = document.querySelector("#status");
 if (
 	!(consent instanceof HTMLInputElement) ||
 	!consentStatus ||
+	!(retryWithdrawal instanceof HTMLButtonElement) ||
 	!(button instanceof HTMLButtonElement) ||
 	!results ||
 	!status
@@ -58,24 +60,51 @@ const showConsent = (message) => {
 		(consent.checked ? "Collection enabled." : "Collection disabled.");
 };
 
-consent.addEventListener("change", async () => {
-	consent.disabled = true;
+let updatingConsent = false;
+
+/** Applies an explicit choice and keeps failed withdrawals available for retry.
+ * @param {boolean} granted
+ */
+const updateConsent = async (granted) => {
+	updatingConsent = true;
+	consent.setAttribute("aria-disabled", "true");
+	retryWithdrawal.setAttribute("aria-disabled", "true");
+
 	try {
-		await collector.setConsent(consent.checked);
+		await collector.setConsent(granted);
 		collector.consentSignal?.addEventListener(
 			"abort",
 			() => {
 				stopImpressions();
-				if (!consent.disabled) showConsent();
+				if (!updatingConsent) showConsent();
 			},
 			{ once: true },
 		);
+		if (document.activeElement === retryWithdrawal) consent.focus();
+		retryWithdrawal.hidden = true;
 		showConsent();
 	} catch {
-		showConsent("Could not update collection consent.");
+		retryWithdrawal.hidden = granted;
+		showConsent(
+			granted
+				? "Could not enable collection."
+				: "Could not complete withdrawal.",
+		);
 	} finally {
-		consent.disabled = false;
+		updatingConsent = false;
+		retryWithdrawal.removeAttribute("aria-disabled");
+		if (retryWithdrawal.hidden) consent.removeAttribute("aria-disabled");
 	}
+};
+
+consent.addEventListener("click", (event) => {
+	if (updatingConsent || !retryWithdrawal.hidden) event.preventDefault();
+});
+consent.addEventListener("change", () => {
+	void updateConsent(consent.checked);
+});
+retryWithdrawal.addEventListener("click", () => {
+	if (!updatingConsent) void updateConsent(false);
 });
 consent.disabled = false;
 button.disabled = false;

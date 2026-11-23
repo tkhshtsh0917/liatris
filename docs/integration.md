@@ -98,7 +98,9 @@ export async function createSearchTracking(obtainWriteToken) {
 
 The collector starts with collection disabled. While the host loads the user's consent decision, or while the user has yet to choose, leave the collector in that initial state. Call and await `setMeasurementConsent(true)` once you have confirmed consent, including when you restore a saved grant. Call and await `setMeasurementConsent(false)` to apply an explicit withdrawal. With queued delivery, this clears the shared session and unsent events for the collection scope, including those from other tabs. An unchecked checkbox at startup can simply mean the decision is still unknown.
 
-After granting consent, use `collector.consentSignal` to read the active grant and listen for its `abort` event to update the consent UI and stop observers. The getter returns `undefined` when collection is disabled. With queued delivery, a withdrawal in another tab can abort the signal. Read the getter again after each new grant. The standalone browser example shows how to connect this to a checkbox. [Example source](../examples/browser/app.mjs)
+Keep the user's consent decision in the host application. If withdrawal fails, keep the decision withdrawn and offer to retry `setMeasurementConsent(false)`. On reload, retry an explicit withdrawal that the host recorded as incomplete. When IndexedDB has committed the withdrawal marker, pending events stay blocked until deletion succeeds. [Durable delivery](delivery.md)
+
+After granting consent, use `collector.consentSignal` to read the active grant and listen for its `abort` event to update the consent UI and stop observers. The getter returns `undefined` when collection is disabled. With queued delivery, a withdrawal in another tab can abort the signal. Read the getter again after each new grant. The standalone browser example shows how to connect this to a checkbox and offer a withdrawal retry. [Example source](../examples/browser/app.mjs)
 
 A consent change leaves the current search request available for rendering. Use `search.clear()` when the host abandons the search, such as when the user leaves the surface.
 

@@ -19,7 +19,9 @@ export function deliveryPriority({ kind, payload }: Envelope): 0 | 1 {
 		: 0;
 }
 
-export type ConsentState = { generation: string; session?: unknown };
+export type ConsentState =
+	| { generation: string; session?: unknown; cleanupPending?: never }
+	| { generation: string; session?: never; cleanupPending: true };
 
 function result<T>(request: IDBRequest<T>): Promise<T> {
 	return new Promise((resolve, reject) => {
@@ -29,7 +31,8 @@ function result<T>(request: IDBRequest<T>): Promise<T> {
 }
 
 export function openOutbox(): Promise<IDBDatabase> {
-	const request = indexedDB.open("liatris-delivery", 2);
+	// Older readers cannot distinguish pending withdrawal from an active scope.
+	const request = indexedDB.open("liatris-delivery", 3);
 	let blocked = false;
 	const opening = new Promise<IDBDatabase>((resolve, reject) => {
 		request.onblocked = () => {
@@ -48,6 +51,8 @@ export function openOutbox(): Promise<IDBDatabase> {
 		const tx = request.transaction;
 		if (!tx)
 			throw new Error("collection storage upgrade is missing a transaction");
+
+		if (event.oldVersion >= 2) return;
 
 		if (event.oldVersion === 0) {
 			db.createObjectStore("scopes");

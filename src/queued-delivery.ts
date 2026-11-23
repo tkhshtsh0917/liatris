@@ -58,6 +58,7 @@ export function createQueuedDelivery({
 	let database: Promise<IDBDatabase> | undefined;
 	let channel: BroadcastChannel | undefined;
 	let active: Lease | undefined;
+	let pendingWithdrawal: string | undefined;
 	let writeGroup: { lease: Lease; writes: PendingWrite[] } | undefined;
 	const encoder = new TextEncoder();
 	let coalesce: ReturnType<typeof setTimeout> | undefined;
@@ -369,12 +370,18 @@ export function createQueuedDelivery({
 		async grant() {
 			if (active) return active.controller.signal;
 			watchRevocation();
-			const state = await updateOutbox(await open(), scope, (state, outbox) => {
-				if (state) return state;
-				const created = { generation: crypto.randomUUID() };
-				outbox.setConsent(created);
-				return created;
-			});
+			const state = await updateOutbox(
+				await open(),
+				scope,
+				async (state, outbox) => {
+					if (state?.cleanupPending) await outbox.removeAll();
+					else if (state) return state;
+
+					const created = { generation: crypto.randomUUID() };
+					outbox.setConsent(created);
+					return created;
+				},
+			);
 			active = {
 				generation: state.generation,
 				controller: new AbortController(),
@@ -392,13 +399,31 @@ export function createQueuedDelivery({
 		async revoke() {
 			stop();
 			watchRevocation();
-			await updateOutbox(await open(), scope, async (state, outbox) => {
-				if (state)
-					channel?.postMessage({ scope, generation: state.generation });
-				const next: ConsentState = { generation: crypto.randomUUID() };
-				outbox.setConsent(next);
+			const db = await open();
+			if (pendingWithdrawal === undefined) {
+				// Commit the new generation before deletion so a failed purge cannot
+				// make the previous session and its events eligible for replay.
+				const withdrawal = await updateOutbox(db, scope, (state, outbox) => {
+					if (state?.cleanupPending) return { generation: state.generation };
+
+					const generation = crypto.randomUUID();
+					outbox.setConsent({ generation, cleanupPending: true });
+					return { generation, previous: state?.generation };
+				});
+				pendingWithdrawal = withdrawal.generation;
+				if (withdrawal.previous)
+					channel?.postMessage({ scope, generation: withdrawal.previous });
+			}
+
+			const generation = pendingWithdrawal;
+			await updateOutbox(db, scope, async (state, outbox) => {
+				// Another tab may already have cleaned up before enabling collection.
+				if (!state?.cleanupPending || state.generation !== generation) return;
+
 				await outbox.removeAll();
+				outbox.setConsent({ generation });
 			});
+			pendingWithdrawal = undefined;
 		},
 
 		/** Shares the session transaction with the same persisted consent generation. */
