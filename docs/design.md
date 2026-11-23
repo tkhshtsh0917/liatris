@@ -14,7 +14,7 @@ The host supplies the query ID that belongs to the displayed result, the result 
 
 The receiver verifies the collection contract and the selected [UBI v1.3.0 schema](../schema/upstream/ubi-1.3.0/README.md). Strict validation is the default. The compatibility option addresses overlapping schema branches for known action names and object types. The sample uses compatibility mode to submit a `click` on a `product`.
 
-The default session timeout is 30 minutes of inactivity. Same-origin tabs can share session state through one IndexedDB transaction per activity. Consent starts disabled in each collector. Revocation stops collection, aborts pending delivery and deletes the persisted session for the configured application. Queued delivery propagates revocation through the shared consent state. Direct delivery leaves propagation to the host. A request already accepted by the receiver can remain there after revocation.
+The default session timeout is 30 minutes of inactivity. Same-origin tabs can share session state through IndexedDB transactions. Queued delivery groups concurrent activity updates. Consent starts disabled in each collector. Revocation stops collection, aborts pending delivery and deletes the persisted session for the configured application. Queued delivery propagates revocation through the shared consent state. Direct delivery leaves propagation to the host. A request already accepted by the receiver can remain there after revocation.
 
 ## Delivery
 

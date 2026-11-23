@@ -41,4 +41,12 @@ npm run test:kinesis
 
 The Compose test submits a single event and a batch through the reference HTTP receiver, repeats one ID across the two requests, and checks both envelopes after reading them from Moto. The unit test verifies partial batch responses. Scope the AWS role to writing the selected stream, and validate the production IAM policy and service limits against AWS. [Kinesis IAM documentation](https://docs.aws.amazon.com/streams/latest/dev/controlling-access.html)
 
+## Verification
+
 For browser delivery tests, build the WASM with `mise run wasm`, install Chromium, Firefox and WebKit with `npx playwright install chromium firefox webkit`, and run `npm run test:browser`. The suite checks lost acknowledgements, storage across reloads, revocation from another tab, priority under impression pressure, partial receipts and migration of the previous queue format, offline recovery, 429 backoff, quota recovery and delivery after a suspended page becomes visible. Capturing new events while offline requires the page to have already loaded the session WASM.
+
+## Performance under impression bursts
+
+We compared v0.1.0 and v0.2.0 in three local runs on each of three browser engines. For 250 simultaneous impressions with a simulated 40 ms acknowledgement delay, the median of each run’s p95 fell from 97 ms to 19 ms for queue persistence and from 384 ms to 206 ms for receipt. Both versions recorded every impression. In the same scenario, the median time from click to receipt increased from 72 ms to 83 ms.
+
+The local SQLite receiver with a test token verifier rose from about 16,600 to 43,600 events per second at eight concurrent HTTP requests with up to 32 events per request. [Reproduce the measurements](../benchmarks/README.md)
