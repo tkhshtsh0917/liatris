@@ -10,6 +10,7 @@ import { chromium, firefox, type Page, type Request, webkit } from "playwright";
 import { openEventStore } from "../../server/event-store.ts";
 import type { Envelope } from "../../src/records.ts";
 import { registerBatchingTests } from "./batching.ts";
+import { registerGrantWithdrawalTests } from "./grant-withdrawal.ts";
 import { registerImpressionTests } from "./impressions.ts";
 import { registerRecoveryTests } from "./recovery.ts";
 import { registerWithdrawalTests } from "./withdrawal.ts";
@@ -427,6 +428,7 @@ test("migrates v1 records and consent, honoring the UTF-8 batch byte limit", {
 });
 
 registerRecoveryTests(origin);
+registerGrantWithdrawalTests(origin);
 registerWithdrawalTests(origin);
 registerImpressionTests(origin);
 registerBatchingTests(origin);

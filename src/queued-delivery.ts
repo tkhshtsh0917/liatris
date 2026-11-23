@@ -75,9 +75,9 @@ export function createQueuedDelivery({
 	let database: Promise<IDBDatabase> | undefined;
 	let channel: BroadcastChannel | undefined;
 	let active: Lease | undefined;
-	let grantNotices: Set<string> | undefined;
+	let openingGrant: AbortController | undefined;
 	let granting: Promise<AbortSignal> | undefined;
-	let withdrawnGeneration: string | undefined;
+	const withdrawals = new Map<string, Set<string>>();
 	let failedWithdrawal: WithdrawalRetry | undefined;
 	let writeGroup: { lease: Lease; writes: PendingWrite[] } | undefined;
 	const encoder = new TextEncoder();
@@ -367,34 +367,48 @@ export function createQueuedDelivery({
 	function watchRevocation() {
 		channel ??= new BroadcastChannel("liatris-consent");
 		channel.onmessage = (
-			message: MessageEvent<{ scope?: string; generation?: string }>,
+			message: MessageEvent<{
+				scope?: string;
+				generation?: string;
+				withdrawal?: string;
+			}>,
 		) => {
 			const notice = message.data;
 			if (notice?.scope !== scope || typeof notice.generation !== "string")
 				return;
 
-			grantNotices?.add(notice.generation);
-			if (active?.generation === notice.generation) {
-				withdrawnGeneration = notice.generation;
-				stop();
-			}
+			const matchesActive = active?.generation === notice.generation;
+			if (active && !matchesActive) return;
+
+			const id =
+				typeof notice.withdrawal === "string"
+					? notice.withdrawal
+					: notice.generation;
+			const notices = withdrawals.get(notice.generation) ?? new Set<string>();
+			const duplicate = notices.has(id);
+			// Keep notices across failed grants and while collection is inactive.
+			notices.add(id);
+			withdrawals.set(notice.generation, notices);
+			if (!duplicate)
+				openingGrant?.abort(
+					new Error("collection consent was withdrawn during setup"),
+				);
+			if (matchesActive) stop();
 		};
 	}
 
-	async function openGrant() {
+	async function openGrant(signal: AbortSignal) {
 		watchRevocation();
-		const notices = new Set<string>();
-		grantNotices = notices;
 		const db = await open();
+		signal.throwIfAborted();
+
 		const state = await updateOutbox(db, scope, async (state, outbox) => {
+			signal.throwIfAborted();
 			// An explicit new grant may complete a withdrawal this tab already saw.
-			if (
-				state &&
-				!state.cleanupPending &&
-				state.generation !== withdrawnGeneration
-			)
+			if (state && !state.cleanupPending && !withdrawals.has(state.generation))
 				return state;
 			if (state) await outbox.removeAll();
+			signal.throwIfAborted();
 
 			const created = { generation: crypto.randomUUID() };
 			outbox.setConsent(created);
@@ -406,12 +420,11 @@ export function createQueuedDelivery({
 			(current) =>
 				current?.generation === state.generation && !current.cleanupPending,
 		);
-		if (!isCurrent || notices.has(state.generation)) {
-			if (notices.has(state.generation)) withdrawnGeneration = state.generation;
+		signal.throwIfAborted();
+		if (!isCurrent)
 			throw new Error("collection consent was withdrawn during setup");
-		}
 
-		withdrawnGeneration = undefined;
+		withdrawals.clear();
 		active = {
 			generation: state.generation,
 			controller: new AbortController(),
@@ -419,8 +432,8 @@ export function createQueuedDelivery({
 		return active.controller.signal;
 	}
 
-	function announceWithdrawal(generation: string) {
-		channel?.postMessage({ scope, generation });
+	function announceWithdrawal(generation: string, withdrawal: string) {
+		channel?.postMessage({ scope, generation, withdrawal });
 	}
 
 	async function withdraw(fallback?: string, retry?: WithdrawalRetry) {
@@ -445,7 +458,7 @@ export function createQueuedDelivery({
 				if (state?.cleanupPending) return state.generation;
 
 				// Notify before the write so a failed transaction still stops peers.
-				if (state) announceWithdrawal(state.generation);
+				if (state) announceWithdrawal(state.generation, target.marker);
 				outbox.setConsent({ generation: target.marker, cleanupPending: true });
 				return target.marker;
 			});
@@ -461,7 +474,7 @@ export function createQueuedDelivery({
 			if (!target && fallback) {
 				// The storage failure happened before the transaction could read the grant.
 				target = { scope, generation: fallback, marker: crypto.randomUUID() };
-				announceWithdrawal(fallback);
+				announceWithdrawal(fallback, target.marker);
 			}
 			failedWithdrawal = target;
 			throw new ConsentWithdrawalError(
@@ -485,8 +498,11 @@ export function createQueuedDelivery({
 		/** Opens this tab's consent lease before delivery starts. */
 		async grant() {
 			if (active) return active.controller.signal;
-			granting ??= openGrant().finally(() => {
-				grantNotices = undefined;
+			if (granting) return granting;
+
+			openingGrant = new AbortController();
+			granting = openGrant(openingGrant.signal).finally(() => {
+				openingGrant = undefined;
 				granting = undefined;
 			});
 			return granting;
