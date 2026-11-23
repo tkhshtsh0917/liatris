@@ -6,9 +6,10 @@
 
 ## 1. デモで一連の動作を確認する
 
-Liatris のチェックアウトで、指定の Node.js を使います。
+Liatris のチェックアウトで次を実行します。
 
 ```sh
+mise install
 mise exec -- npm ci
 mise exec -- npm run demo
 ```
@@ -27,13 +28,15 @@ mise exec -- npm run demo
 
 ## 2. ブラウザ SDK を配置し、プロファイルをコンパイルする
 
-使用する SDK のバージョンに対応した導入ガイドに従います。[GitHub リリース](https://github.com/tkhshtsh0917/liatris/releases)を使う場合は、同じリリースから `liatris-browser.tar.gz` と `SHA256SUMS` をダウンロードし、アーカイブを検証して展開します。開発用のチェックアウトでは `mise exec -- npm run sdk:build` を実行して、`dist/sdk/` に SDK を生成します。
+公開済みの SDK を使う場合は、対応するソースタグの導入ガイドを参照します。同じリリースから `liatris-browser.tar.gz` と `SHA256SUMS` をダウンロードし、ダウンロード先で次のコマンドを実行します。[GitHub Releases](https://github.com/tkhshtsh0917/liatris/releases)
 
 ```sh
 shasum -a 256 -c SHA256SUMS && tar -xzf liatris-browser.tar.gz
 ```
 
-配布物と同じタグのソースで Node.js の依存関係をインストールしてから、独立サンプルのプロファイルをコピーし、`tenant`、`application`、収集先の `endpoint` を設定します。このプロファイルは検索開始、結果表示、露出、クリックを宣言し、検索語の収集を無効にします。標準のクリックイベントには UBI の互換モードを使います。[スキーマモード](design.md#ubi-とセッション)
+開発用のチェックアウトで SDK を試す場合は、手順1と同じ方法で依存関係をインストールして `mise exec -- npm run sdk:build` を実行します。展開済みのファイルは `dist/sdk/liatris-browser/` に生成されます。
+
+SDK と同じソースをチェックアウトし、手順1と同じ方法で依存関係をインストールしてから、独立サンプルのプロファイルをコピーし、`tenant`、`application`、収集先の `endpoint` を設定します。このプロファイルは検索開始、結果表示、露出、クリックを宣言し、検索語の収集を無効にします。標準のクリックイベントには UBI の互換モードを使います。[スキーマモード](design.md#ubi-とセッション)
 
 ```sh
 cp examples/browser/profile.toml my-service.toml
@@ -42,14 +45,14 @@ artifact_dir=$(mktemp -d)
 mise exec -- npm run --silent profile -- my-service.toml "$artifact_dir/profile.json" > "$artifact_dir/profile.sha256"
 ```
 
-以下のファイルを導入先の HTTPS オリジンから配信します。ES モジュールには JavaScript の MIME タイプを設定します。Content Security Policy を設定している場合は、`script-src` でモジュールのオリジンを、`connect-src` で収集先のオリジンを許可します。
+以下のファイルを導入先の HTTPS オリジンから配信します。ES モジュールには JavaScript の MIME タイプを設定します。Content Security Policy を設定している場合は、`script-src` でモジュールのオリジンを、`connect-src` でプロファイルの配信元とイベントの収集先のオリジンを許可します。
 
 | 配信元 | 導入先の URL |
 | --- | --- |
 | `liatris-browser/` にあるすべての `.js` ファイル。相対 import はそのまま保ちます。 | `/assets/liatris/` |
 | `$artifact_dir/profile.json` と `$artifact_dir/profile.sha256` | `/assets/liatris/profile.json` と `/assets/liatris/profile.sha256` |
 
-アーカイブには TypeScript の開発ツールで使う `.d.ts` が JavaScript と同梱されています。受信側にも同じコンパイル済みプロファイルとハッシュを渡し、ブラウザと受信側の設定を一緒に配備します。[独立したブラウザサンプル](../../examples/browser/)は上記の公開パスを使い、CI ではアーカイブを展開して動作を検証します。
+アーカイブにはブラウザ SDK と TypeScript の型宣言が入っています。プロファイルのコンパイラとリファレンス受信実装は、チェックアウトしたソースから実行します。受信側にも同じコンパイル済みプロファイルとハッシュを渡し、ブラウザと受信側の設定を一緒に配備します。[独立したブラウザサンプル](../../examples/browser/)は上記の公開パスを使い、CI ではアーカイブを展開して動作を検証します。
 
 ## 3. アプリケーションで初期化する
 
@@ -104,7 +107,7 @@ export async function createSearchTracking(obtainWriteToken) {
 | 応答を表示できるようになったとき | `request.render({ resultCount, rankingVersion }, draw)` に、実際の表示件数と採用した順位付けの版を渡します。`draw(display)` の中で同期的に一覧を描画し、クリック時に使う `display` をそれぞれのカードと一緒に保持します。非同期描画のフレームワークでは、表示が確定する箇所に計測をつなぎます。同意などで計測が無効な場合、`display` は `undefined` になります。 |
 | 表示中の結果をクリックしたとき | `collector.trackEvent("click", ...)` に、そのカードの表示時の文脈、アイテム ID、表示順位を渡します。次の検索が進行中でも、クリックされたカードにひも付く値を使います。 |
 
-収集 Promise はエラー報告に使い、検索の画面遷移や業務処理は収集結果を待たずに進められます。デモのソースでは、必要に応じて追加できる露出・滞在時間も含めて、実際の呼び出し箇所が確認できます。[デモのソース](../../demo/browser.ts)
+`request.submitted` とクリック時の `trackEvent` の Promise でエラーを処理します。`request.render` が Promise を返した場合も同様に処理します。検索の画面遷移や業務処理は収集結果を待たずに進めます。デモのソースでは、必要に応じて追加できる露出・滞在時間も含めて、実際の呼び出し箇所が確認できます。[デモのソース](../../demo/browser.ts)
 
 クリック時の `itemId` と `displayedRank` はアプリケーションの描画処理で決まります。安定した不透明なアイテム ID と、1 始まりの表示順位を渡します。
 
@@ -123,6 +126,6 @@ if (display) {
 
 ## 5. 受信 API をつなぐ
 
-プロファイルの `endpoint` に POST ルートを用意します。アプリケーションと同じ HTTPS オリジンでの配信を基本とします。Node.js の参考実装なら、`openEventStore(path, profile)` で保存先を作り、そのルートで `createHttpReceiver(profile, profileHash, store.accept, { audience, verifyBearer, acceptBatch: store.acceptBatch })` を使います。`profile` と `profileHash` は手順2で配信した二つのコンパイル済みファイルから読み、ハッシュファイルの末尾の改行は `trim()` で除きます。`verifyBearer` はトークンを認証し、検証済みのテナント、アプリケーション、対象サービス、`liatris:write` 権限、有効期限を返します。既存の受信 API を使う場合は、同じ HTTP 契約で受け付けます。[受信側の入口](../../server/http.ts) · [永続配送](delivery.md) · [認証と本番公開の条件](security.md)
+プロファイルの `endpoint` に POST ルートを用意します。アプリケーションと同じ HTTPS オリジンでの配信を基本とします。Node.js の参考実装なら、`openEventStore(path, profile)` で保存先を作り、そのルートで `createHttpReceiver(profile, profileHash, store.accept, { audience, verifyBearer, acceptBatch: store.acceptBatch })` を使います。`profile` と `profileHash` は手順2で配信した二つのコンパイル済みファイルから読み、ハッシュファイルの末尾の改行は `trim()` で除きます。`verifyBearer` はトークンを認証し、検証済みのテナント、アプリケーション、対象サービス、`liatris:write` 権限、有効期限を返します。既存の受信 API を使う場合は、同じ HTTP 契約で受け付けます。ブラウザと受信 API のオリジンが異なる場合は、ゲートウェイまたは HTTP サーバーで `OPTIONS` のプリフライトを含む CORS を設定します。[受信側の入口](../../server/http.ts) · [永続配送](delivery.md) · [認証と本番公開の条件](security.md)
 
 自分のページで手順1と同じ確認をしたら、同意を撤回してもう一度検索します。検索結果が表示され、撤回後の新しい収集 POST が出なければ、組み込みの確認は完了です。すぐに返る `queued` はブラウザ内への保存を表し、受信側の応答本文の `accepted` が、そのイベントの永続保存を確認する応答です。

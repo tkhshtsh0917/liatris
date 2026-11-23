@@ -10,11 +10,11 @@ Start with the [integration guide](docs/integration.md) to connect your profile,
 
 ## Run the local demo
 
-Use the Node.js version specified in [mise.toml](mise.toml).
+Install the Node.js version specified in [mise.toml](mise.toml), then start the demo.
 
 ```sh
+mise install
 mise exec -- npm ci
-mise run check
 mise exec -- npm run demo
 ```
 
@@ -42,9 +42,23 @@ The defaults are 50% visible card area and 30 minutes of session inactivity. Omi
 - [Design](docs/design.md) explains UBI schema modes, session policy and transport integration.
 - [Event contracts](docs/event-contracts.md) shows how to define events for commerce and jobs.
 
-To compile a profile separately, run `mkdir -p dist && npm run profile -- examples/shop.toml dist/shop.profile.json`. The compiler writes normalized JSON and prints its SHA-256.
+To compile a profile separately, run `mkdir -p dist && mise exec -- npm run profile -- examples/shop.toml dist/shop.profile.json`. The compiler writes normalized JSON and prints its SHA-256.
 
 The demo uses an IndexedDB queue and a SQLite reference receiver. Server-side adapters forward accepted events to the deployment’s streaming destination. The repository includes an Amazon Kinesis Data Streams adapter as a working example. The [integration guide](docs/integration.md#2-install-the-browser-sdk-and-compile-a-profile) explains how to verify and install the browser SDK from [GitHub Releases](https://github.com/tkhshtsh0917/liatris/releases).
+
+## Verify a change
+
+Run the following from the repository root after installing dependencies.
+
+```sh
+mise run check
+mise exec -- npx playwright install chromium firefox webkit
+mise exec -- npm run test:browser
+mise exec -- npm run sdk:build
+mise exec -- npm run test:sdk
+```
+
+The checks cover formatting, lint, types, unit tests, browser delivery and use of the extracted SDK. The optional streaming example has a separate Docker Compose round-trip test. [Delivery verification](docs/delivery.md#verification)
 
 ## License
 

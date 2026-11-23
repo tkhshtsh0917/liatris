@@ -10,11 +10,11 @@ Liatris はセッション管理を内蔵した TypeScript のコレクターで
 
 ## ローカルデモを実行する
 
-[mise.toml](mise.toml) で指定した Node.js を使います。
+[mise.toml](mise.toml) で指定した Node.js をインストールして、デモを起動します。
 
 ```sh
+mise install
 mise exec -- npm ci
-mise run check
 mise exec -- npm run demo
 ```
 
@@ -42,9 +42,23 @@ inactivityMinutes = 15
 - [設計](docs/ja/design.md) では、UBI のスキーマモード、セッションポリシー、配送方式を説明します。
 - [イベント契約](docs/ja/event-contracts.md) では、EC・求人サイトのイベント定義例を示します。
 
-収集プロファイルだけをコンパイルするには `mkdir -p dist && npm run profile -- examples/shop.toml dist/shop.profile.json` を実行します。コンパイラは正規化済み JSON を書き込み、SHA-256 を表示します。
+収集プロファイルだけをコンパイルするには `mkdir -p dist && mise exec -- npm run profile -- examples/shop.toml dist/shop.profile.json` を実行します。コンパイラは正規化済み JSON を書き込み、SHA-256 を表示します。
 
 デモは IndexedDB キューと SQLite のリファレンス受信実装を使います。受領済みのイベントは、サーバー側のアダプターで導入先のストリーミング基盤へ転送できます。動作する接続例として Amazon Kinesis Data Streams 用のアダプターを同梱しています。[導入ガイド](docs/ja/integration.md#2-ブラウザ-sdk-を配置しプロファイルをコンパイルする)では、[GitHub Releases](https://github.com/tkhshtsh0917/liatris/releases) のブラウザ SDK を検証して組み込む手順を説明します。
+
+## 変更を検証する
+
+依存関係をインストールしてから、リポジトリルートで次を実行します。
+
+```sh
+mise run check
+mise exec -- npx playwright install chromium firefox webkit
+mise exec -- npm run test:browser
+mise exec -- npm run sdk:build
+mise exec -- npm run test:sdk
+```
+
+整形、lint、型、単体テスト、ブラウザでの配送、展開した SDK の利用を確認します。任意のストリーミング接続例には Docker Compose を使った往復テストがあります。[配送の検証](docs/ja/delivery.md#検証)
 
 ## ライセンス
 

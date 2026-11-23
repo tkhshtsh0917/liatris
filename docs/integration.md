@@ -6,9 +6,10 @@ This guide starts with three events for one search surface. Record the submitted
 
 ## 1. Verify the sample end to end
 
-Use the pinned Node.js version in the Liatris checkout.
+Run these commands from the Liatris checkout.
 
 ```sh
+mise install
 mise exec -- npm ci
 mise exec -- npm run demo
 ```
@@ -27,13 +28,15 @@ The demo also sends an optional UBI Query record with synthetic search text. The
 
 ## 2. Install the browser SDK and compile a profile
 
-Use the installation guide for your SDK version. For a [GitHub release](https://github.com/tkhshtsh0917/liatris/releases), download `liatris-browser.tar.gz` and `SHA256SUMS` from the same release, then verify and extract the archive. For a development checkout, build the SDK in `dist/sdk/` with `mise exec -- npm run sdk:build`.
+For a released SDK, read the guide at the matching source tag. Download `liatris-browser.tar.gz` and `SHA256SUMS` from the same release and run the following command in the download directory. [GitHub Releases](https://github.com/tkhshtsh0917/liatris/releases)
 
 ```sh
 shasum -a 256 -c SHA256SUMS && tar -xzf liatris-browser.tar.gz
 ```
 
-From the matching source tag with the Node.js dependencies installed, copy the standalone example profile and set your `tenant`, `application`, and collection `endpoint`. This profile declares search submissions, result displays, impressions, and clicks with search text disabled. It uses the UBI compatibility mode for the standard click event. [Schema modes](design.md#ubi-and-sessions)
+To try the SDK from a development checkout, install the dependencies as in step 1 and run `mise exec -- npm run sdk:build`. The extracted files are then available in `dist/sdk/liatris-browser/`.
+
+In the source checkout used for your SDK, install the dependencies as in step 1 and copy the standalone example profile and set your `tenant`, `application`, and collection `endpoint`. This profile declares search submissions, result displays, impressions, and clicks with search text disabled. It uses the UBI compatibility mode for the standard click event. [Schema modes](design.md#ubi-and-sessions)
 
 ```sh
 cp examples/browser/profile.toml my-service.toml
@@ -42,14 +45,14 @@ artifact_dir=$(mktemp -d)
 mise exec -- npm run --silent profile -- my-service.toml "$artifact_dir/profile.json" > "$artifact_dir/profile.sha256"
 ```
 
-Serve the following files on your application's HTTPS origin. Use a JavaScript MIME type for the ES modules. If you set a Content Security Policy, allow the module's origin in `script-src`. Allow the intake origin in `connect-src`.
+Serve the following files on your application's HTTPS origin. Use a JavaScript MIME type for the ES modules. If you set a Content Security Policy, allow the module's origin in `script-src`. Allow the origins serving the profile and receiving events in `connect-src`.
 
 | Source | URL in your app |
 | --- | --- |
 | All `.js` files in `liatris-browser/`, with relative imports intact | `/assets/liatris/` |
 | `$artifact_dir/profile.json` and `$artifact_dir/profile.sha256` | `/assets/liatris/profile.json` and `/assets/liatris/profile.sha256` |
 
-The archive includes `.d.ts` files alongside the JavaScript for TypeScript tooling. Use the same compiled profile and hash in the receiving application, and deploy the browser and receiver configuration together. The [standalone browser example](../examples/browser/) uses these public paths, and CI tests it against the extracted archive.
+The archive contains the browser SDK and its TypeScript declarations. Run the profile compiler and the reference receiver from the source checkout. Use the same compiled profile and hash in the receiving application, and deploy the browser and receiver configuration together. The [standalone browser example](../examples/browser/) uses these public paths, and CI tests it against the extracted archive.
 
 ## 3. Initialize the collector in your app
 
@@ -104,7 +107,7 @@ export async function createSearchTracking(obtainWriteToken) {
 | When the response is ready to render | Call `request.render({ resultCount, rankingVersion }, draw)` with the count shown and version selected by your app. Synchronously render inside `draw(display)`. Keep `display` with the rendered cards for their click handlers. In asynchronous UI frameworks, connect measurement to the actual commit. The callback can receive `undefined` when measurement is inactive. |
 | When a visible result is clicked | Call `collector.trackEvent("click", ...)` with the display context and the card's ID and displayed rank. Use each card's own display context even when another query is pending. |
 
-Use the event's promise for error reporting. Keep search navigation and business actions responsive while collecting logs. The runnable demo shows the full call sites, including optional impressions and dwell time. [Demo source](../demo/browser.ts)
+Handle errors from `request.submitted`, the optional promise returned by `request.render`, and the click's `trackEvent` promise. Keep search navigation and business actions responsive while collecting logs. The runnable demo shows the full call sites, including optional impressions and dwell time. [Demo source](../demo/browser.ts)
 
 For the third call, `itemId` and `displayedRank` come from your result renderer. Use a stable, opaque item ID and a rank starting at 1.
 
@@ -123,6 +126,6 @@ if (display) {
 
 ## 5. Connect your receiver
 
-Host a POST route at the profile's `endpoint`, preferably on the application's HTTPS origin. For the Node.js reference implementation, mount `createHttpReceiver(profile, profileHash, store.accept, { audience, verifyBearer, acceptBatch: store.acceptBatch })` at that route with a store created by `openEventStore(path, profile)`. Load `profile` and `profileHash` from the two compiled files you served in step 2. Use `trim()` to strip the newline from the hash file. `verifyBearer` authenticates each token and returns the verified tenant, application, audience, `liatris:write` permission, and expiry. An existing receiver can implement the same HTTP contract. [Receiver entry point](../server/http.ts) · [Durable delivery](delivery.md) · [Authentication and production controls](security.md)
+Host a POST route at the profile's `endpoint`, preferably on the application's HTTPS origin. For the Node.js reference implementation, mount `createHttpReceiver(profile, profileHash, store.accept, { audience, verifyBearer, acceptBatch: store.acceptBatch })` at that route with a store created by `openEventStore(path, profile)`. Load `profile` and `profileHash` from the two compiled files you served in step 2. Use `trim()` to strip the newline from the hash file. `verifyBearer` authenticates each token and returns the verified tenant, application, audience, `liatris:write` permission, and expiry. An existing receiver can implement the same HTTP contract. If the browser and intake are on different origins, configure the gateway or your HTTP server to handle CORS, including the `OPTIONS` preflight. [Receiver entry point](../server/http.ts) · [Durable delivery](delivery.md) · [Authentication and production controls](security.md)
 
 Repeat the checks in step 1 against your own page, then withdraw consent and try another search. A working integration renders the results and produces no new collection POST after withdrawal. The immediate `queued` result shows local storage in the browser. An `accepted` receipt in the response body confirms durable storage for that event.

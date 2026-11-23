@@ -14,7 +14,7 @@ Concurrent captures share IndexedDB write transactions of up to 32 events. Each 
 
 Tabs share a consent generation, session and queue in IndexedDB. A withdrawal deletes the session and pending events in one transaction, changes the generation, and aborts active delivery in tabs that receive the notice. Late callbacks recheck the generation before updating storage. A request that already reached the collector service may have been accepted. Removal of received data is a server-side operation.
 
-A batch is a JSON array sent as `application/vnd.liatris.batch+json`. Each request is limited to 32 records and 128 KiB, and each record to 32 KiB. The response is HTTP 200 with exactly one receipt per submitted `event_id`.
+A batch is a JSON array sent as `application/vnd.liatris.batch+json`. Each request is limited to 32 records and 128 KiB, and each record to 32 KiB. A valid batch request receives HTTP 200 with exactly one receipt per submitted `event_id`. An invalid batch structure, such as duplicate event IDs, receives HTTP 400.
 
 | Status | Queue behavior |
 | --- | --- |
@@ -43,10 +43,10 @@ The Compose test submits a single event and a batch through the reference HTTP r
 
 ## Verification
 
-For browser delivery tests, install Chromium, Firefox and WebKit with `npx playwright install chromium firefox webkit` and run `npm run test:browser`. The suite checks lost acknowledgements, storage across reloads, revocation from another tab, priority under impression pressure, partial receipts and migration of the previous queue format, offline recovery, 429 backoff, quota recovery and delivery after a suspended page becomes visible. It also checks that after the page and SDK have loaded, the first event can be queued while offline and a session persisted by v0.2.0 can be reused.
+For browser delivery tests, install Chromium, Firefox and WebKit with `mise exec -- npx playwright install chromium firefox webkit` and run `mise exec -- npm run test:browser`. The suite checks lost acknowledgements, storage across reloads, revocation from another tab, priority under impression pressure, partial receipts and migration of the previous queue format, offline recovery, 429 backoff, quota recovery and delivery after a suspended page becomes visible. It also checks that after the page and SDK have loaded, the first event can be queued while offline and a session persisted by v0.2.0 can be reused.
 
 ## Performance under impression bursts
 
 We compared v0.1.0 and v0.2.0 in three local runs on each of three browser engines. For 250 simultaneous impressions with a simulated 40 ms acknowledgement delay, the median of each run’s p95 fell from 97 ms to 19 ms for queue persistence and from 384 ms to 206 ms for receipt. Both versions recorded every impression. In the same scenario, the median time from click to receipt increased from 72 ms to 83 ms.
 
-The local SQLite receiver with a test token verifier rose from about 16,600 to 43,600 events per second at eight concurrent HTTP requests with up to 32 events per request. [Reproduce the measurements](../benchmarks/README.md)
+The local SQLite receiver with a test token verifier rose from about 16,600 to 43,600 events per second at eight concurrent HTTP requests with up to 32 events per request. [Run the local benchmarks](../benchmarks/README.md)

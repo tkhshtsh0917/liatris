@@ -1,5 +1,7 @@
 # Delivery performance checks
 
+[日本語](README.ja.md)
+
 Run the checks from the repository root with the pinned Node.js version. Install dependencies with `mise exec -- npm ci` and the three browser engines with `mise exec -- npx playwright install chromium firefox webkit`.
 
 ```sh
@@ -30,4 +32,4 @@ mise exec -- npm run demo:build
 mise exec -- node benchmarks/delivery.ts browser-session /path/to/liatris-browser
 ```
 
-The script first checks 11,575 session decisions against the released WASM. It then compares the released SDK with the current browser build in Chromium, Firefox and WebKit, alternating their order over three trials. Each run measures the first event through IndexedDB and an HTTP receipt, then measures a warm burst of 40 or 250 impressions. The mocked API responds after 0 ms for 40 impressions and after 40 ms for 250 impressions. Both builds run under the same API conditions. The additional 0 or 40 ms delay applies only to the old session module request. For a pooled summary of burst tail latency, take the median of the per-run `ackP95` values for each SDK and scenario.
+The script first checks 11,575 session decisions against the released WASM. It then compares the released SDK with the current browser build in Chromium, Firefox and WebKit, alternating their order over three trials. Each run measures the first event through IndexedDB and an HTTP receipt, then measures a warm burst of 40 or 250 impressions. The mocked API responds after 0 ms for 40 impressions and after 40 ms for 250 impressions. Both builds run under the same API conditions. The additional 0 or 40 ms delay applies only to the old session module request. Summarize burst tail latency for each SDK and scenario with the median of the per-run `ackP95` values.
