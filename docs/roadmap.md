@@ -19,6 +19,12 @@ M2 includes opt-in duration metrics and tests for inactivity and missing observa
 
 See [search interaction log analysis](log-analysis.md) for unbiased ranking, dense retrieval training, and session-level experiments.
 
+## Event projection experiment
+
+The Rust prototype runs the same profile rules as WASM in the browser and as a native Node-API addon at intake. The test corpus covers nested fields, UTF-16 string lengths, integer limits and host-only inputs that use the existing TypeScript path. The receiver still applies the pinned UBI schema and authentication.
+
+With 250 local impressions and a simulated 40 ms response delay, the median of the per-run receipt p95 was 215 ms with TypeScript and 211 ms with the WASM prototype. The prototype increased module-loading time and reduced intake throughput from about 45,300 to 36,100 events per second at eight concurrent HTTP requests. The normal collector and receiver retain their TypeScript projection. The existing session-boundary WASM continues to ship. [Reproduce the experiment](../experiments/event-core/README.md)
+
 ## Optional transport
 
 Evaluate gRPC once a destination requires it. Use unary gRPC-Web for browser-to-intake integration or native gRPC for server-side forwarding. Replay the HTTP fixtures to verify event fields, limits, per-event receipt semantics, and transient versus permanent failures. Include CORS, deadlines and cancellation when the browser uses RPC.
