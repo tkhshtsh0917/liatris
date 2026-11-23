@@ -96,8 +96,6 @@ export async function createSearchTracking(obtainWriteToken) {
 }
 ```
 
-When migrating from v0.2.0, remove the `loadWasm` option and the old session module. Existing callbacks passed through that option are accepted and ignored.
-
 ## 4. Add three calls at the application boundaries
 
 | Where to call | What your application supplies |

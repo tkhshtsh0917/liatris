@@ -96,8 +96,6 @@ export async function createSearchTracking(obtainWriteToken) {
 }
 ```
 
-v0.2.0 から移行する場合は、`loadWasm` オプションと旧セッションモジュールを取り除きます。既存の呼び出しでこのオプションにコールバックが渡されても、SDK は受理したうえで無視します。
-
 ## 4. アプリケーションの3か所から収集 API を呼ぶ
 
 | 呼び出す場所 | 導入先が渡す情報 |

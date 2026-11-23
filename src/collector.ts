@@ -23,8 +23,6 @@ type Status = "sent" | "queued" | "no-consent" | "query-text-disabled";
 type Options = {
 	profile: Profile;
 	profileHash: string;
-	/** @deprecated Session handling is built in. This callback is ignored. */
-	loadWasm?: () => Promise<BufferSource>;
 } & (
 	| { openStore: () => Promise<SessionStore>; deliver: Delivery; queue?: never }
 	| { queue: QueuedDelivery; openStore?: never; deliver?: never }

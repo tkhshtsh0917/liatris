@@ -142,7 +142,7 @@ test("aborts in-flight delivery on revocation and starts a new session after con
 	assert.notEqual(sessionIds[0], sessionIds[1]);
 });
 
-test("a fresh collector can reuse and revoke a persisted session with legacy options", async () => {
+test("a fresh collector can reuse and revoke a persisted session", async () => {
 	const store = memorySessionStore();
 	const sessionIds: unknown[] = [];
 	const options = {
@@ -159,12 +159,7 @@ test("a fresh collector can reuse and revoke a persisted session with legacy opt
 	await original.setConsent(true);
 	await original.trackEvent("click", click);
 
-	const reopened = createCollector({
-		...options,
-		async loadWasm() {
-			assert.fail("legacy asset loader called");
-		},
-	});
+	const reopened = createCollector(options);
 	await reopened.setConsent(true);
 	assert.equal(await reopened.trackEvent("click", click), "sent");
 	assert.equal(sessionIds[0], sessionIds[1]);
