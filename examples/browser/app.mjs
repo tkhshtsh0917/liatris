@@ -27,6 +27,7 @@ const collector = createCollector({
 		profile,
 		profileHash,
 		sendBatch: createHttpBatchDelivery(profile.endpoint),
+		parallelBatches: 2,
 	}),
 	loadWasm: async () => (await asset("session.wasm")).arrayBuffer(),
 });

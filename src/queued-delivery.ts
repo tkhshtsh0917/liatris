@@ -24,8 +24,8 @@ type Options = {
 	profileHash: string;
 	onDrop?: (reason: DropReason) => void;
 } & (
-	| { send: Delivery; sendBatch?: never }
-	| { sendBatch: BatchDelivery; send?: never }
+	| { send: Delivery; sendBatch?: never; parallelBatches?: never }
+	| { sendBatch: BatchDelivery; send?: never; parallelBatches?: 1 | 2 }
 );
 
 type Lease = { generation: string; controller: AbortController };
@@ -48,8 +48,12 @@ export function createQueuedDelivery({
 	profileHash,
 	send,
 	sendBatch,
+	parallelBatches = 1,
 	onDrop,
 }: Options) {
+	if (parallelBatches !== 1 && parallelBatches !== 2)
+		throw new RangeError("parallelBatches must be 1 or 2");
+
 	const scope = JSON.stringify([profile.tenant, profile.application]);
 	let database: Promise<IDBDatabase> | undefined;
 	let channel: BroadcastChannel | undefined;
@@ -112,6 +116,7 @@ export function createQueuedDelivery({
 					const expired = await outbox.expire(now);
 					let occupied = await outbox.count();
 					const errors: (Error | undefined)[] = [];
+					let clickReady = false;
 					for (const { record, signal } of writes) {
 						if (signal.aborted || lease.controller.signal.aborted) {
 							errors.push(new Error("collection consent was withdrawn"));
@@ -152,9 +157,10 @@ export function createQueuedDelivery({
 							continue;
 						}
 						errors.push(undefined);
+						if (record.payload.action_name === "click") clickReady = true;
 						occupied++;
 					}
-					return { errors, expired };
+					return { errors, expired, clickReady };
 				},
 			);
 			if (!result) {
@@ -175,7 +181,7 @@ export function createQueuedDelivery({
 				active === lease &&
 				result.errors.some((error) => error === undefined)
 			) {
-				if (!sendBatch || drain) wake();
+				if (!sendBatch || drain || result.clickReady) wake();
 				else coalesce ??= setTimeout(wake, coalesceMs);
 			}
 		} catch (error) {
@@ -189,7 +195,7 @@ export function createQueuedDelivery({
 		for (const entry of entries) {
 			const size =
 				(entry.encodedBytes ?? byteLength(entry.record)) + Number(count > 0);
-			if (bytes + size > maxBatchBytes) break;
+			if (count === maxBatchEvents || bytes + size > maxBatchBytes) break;
 			bytes += size;
 			count++;
 		}
@@ -218,7 +224,7 @@ export function createQueuedDelivery({
 				const ready = await outbox.ready(
 					profileHash,
 					now,
-					sendBatch ? maxBatchEvents : 1,
+					sendBatch ? parallelBatches * maxBatchEvents : 1,
 				);
 				const nextAttempt = ready.length
 					? Infinity
@@ -237,7 +243,21 @@ export function createQueuedDelivery({
 			if (Number.isFinite(next.nextAttempt)) schedule(next.nextAttempt);
 			return;
 		}
-		const entries = sendBatch ? sizedBatch(next.ready) : next.ready;
+		const first = sendBatch ? sizedBatch(next.ready) : next.ready;
+		const groups = [first];
+		if (parallelBatches === 2 && first.length < next.ready.length)
+			groups.push(sizedBatch(next.ready.slice(first.length)));
+
+		// Finish all requests in this selection before reading the outbox again.
+		const settled = await Promise.allSettled(
+			groups.map((entries) => deliverEntries(lease, entries)),
+		);
+		const failed = settled.find((result) => result.status === "rejected");
+		if (failed) throw failed.reason;
+	}
+
+	async function deliverEntries(lease: Lease, entries: QueuedEvent[]) {
+		if (lease.controller.signal.aborted) return;
 		const receipts = new Map<string, ReceiptStatus>();
 		let retryAfter = 0;
 		let fallback: ReceiptStatus = "retry";

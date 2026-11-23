@@ -83,7 +83,7 @@ export async function createSearchTracking(obtainWriteToken) {
   const collector = createCollector({
     profile,
     profileHash,
-    queue: createQueuedDelivery({ profile, profileHash, sendBatch }),
+    queue: createQueuedDelivery({ profile, profileHash, sendBatch, parallelBatches: 2 }),
     loadWasm: async () => (await asset("session.wasm")).arrayBuffer(),
   });
   const search = createSearchMeasurement(collector);

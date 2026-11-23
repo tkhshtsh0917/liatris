@@ -34,6 +34,7 @@ const collector = createCollector({
 		profile,
 		profileHash: sha256,
 		sendBatch: createHttpBatchDelivery(profile.endpoint),
+		parallelBatches: 2,
 	}),
 	async loadWasm() {
 		const response = await fetch("/session.wasm", { credentials: "omit" });

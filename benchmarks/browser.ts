@@ -88,6 +88,7 @@ export async function benchmarkBrowser() {
 							const queue = queueModule.createQueuedDelivery({
 								profile,
 								profileHash: sha256,
+								parallelBatches: 2,
 								async sendBatch(events, signal) {
 									const result = await http(events, signal);
 									const accepted = new Set(

@@ -554,3 +554,73 @@ test("coalesces session updates without rebinding observations to later events",
 		await browser.close();
 	}
 });
+
+test("opts into two disjoint requests and aborts both on consent withdrawal", {
+	timeout: 30_000,
+}, async () => {
+	const browser = await chromium.launch();
+	try {
+		const page = await browser.newPage();
+		await page.goto(origin);
+		const measured = await page.evaluate(async () => {
+			const { createQueuedDelivery } = (await import(
+				"/assets/src/queued-delivery.js" as string
+			)) as typeof import("../../src/queued-delivery.ts");
+			const twoStarted = Promise.withResolvers<void>();
+			const twoAborted = Promise.withResolvers<void>();
+			const ids: string[] = [];
+			let started = 0;
+			let aborted = 0;
+			const queue = createQueuedDelivery({
+				profile: { tenant: "test", application: "parallel" },
+				profileHash: "parallel",
+				parallelBatches: 2,
+				async sendBatch(records, signal) {
+					ids.push(...records.map(({ event_id }) => event_id));
+					if (++started === 2) twoStarted.resolve();
+					await new Promise<void>((resolve) => {
+						signal.addEventListener(
+							"abort",
+							() => {
+								if (++aborted === 2) twoAborted.resolve();
+								resolve();
+							},
+							{ once: true },
+						);
+					});
+					return records.map(({ event_id }) => ({
+						event_id,
+						status: "accepted",
+					}));
+				},
+			});
+			const consent = await queue.grant();
+			await Promise.all(
+				Array.from({ length: 96 }, () =>
+					queue.enqueue(
+						{
+							event_id: crypto.randomUUID(),
+							profile_hash: "parallel",
+							kind: "event",
+							payload: { action_name: "result_impression" },
+						},
+						consent,
+					),
+				),
+			);
+			await twoStarted.promise;
+			await queue.revoke();
+			await twoAborted.promise;
+			await queue.close();
+			return { started, aborted, count: ids.length, unique: new Set(ids).size };
+		});
+		assert.deepEqual(measured, {
+			started: 2,
+			aborted: 2,
+			count: 64,
+			unique: 64,
+		});
+	} finally {
+		await browser.close();
+	}
+});
