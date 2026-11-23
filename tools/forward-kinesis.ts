@@ -25,6 +25,7 @@ const client = new KinesisClient({
 		? { requestHandler: new NodeHttpHandler() }
 		: {}),
 });
+const idlePollMs = 250;
 const stop = new AbortController();
 process.once("SIGINT", () => stop.abort());
 process.once("SIGTERM", () => stop.abort());
@@ -59,7 +60,8 @@ try {
 			retryMs = Math.min(30_000, retryMs * 2);
 		} else {
 			retryMs = 1_000;
-			if (!forwarded) await sleep(1_000, undefined, { signal: stop.signal });
+			if (!forwarded)
+				await sleep(idlePollMs, undefined, { signal: stop.signal });
 		}
 	}
 } catch (error) {

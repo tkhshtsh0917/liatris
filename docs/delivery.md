@@ -32,7 +32,7 @@ A process can stop after the destination accepts a record and before the outbox 
 
 ## Reference adapter for Amazon Kinesis Data Streams
 
-Run one forwarding worker per SQLite outbox and stream. Provide `LIATRIS_KINESIS_STREAM`, `AWS_REGION` and a server-side AWS credential provider. The worker uses `LIATRIS_DB` and accepts `LIATRIS_PROFILE` as the path to a TOML profile for selecting the tenant and application. It uses HTTP/1.1 when a plain HTTP Kinesis endpoint override is configured for local tests.
+Run one forwarding worker per SQLite outbox and stream. Provide `LIATRIS_KINESIS_STREAM`, `AWS_REGION` and a server-side AWS credential provider. The worker uses `LIATRIS_DB` and accepts `LIATRIS_PROFILE` as the path to a TOML profile for selecting the tenant and application. It uses HTTP/1.1 when a plain HTTP Kinesis endpoint override is configured for local tests. The worker checks an empty outbox every 250 ms and applies exponential backoff after a forwarding error.
 
 ```sh
 npm run forward:kinesis
