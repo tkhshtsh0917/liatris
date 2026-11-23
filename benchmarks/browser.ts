@@ -4,7 +4,7 @@ import { chromium, firefox, webkit } from "playwright";
 import type { Envelope } from "../src/records.ts";
 import { compiled, percentile } from "./fixtures.ts";
 
-export async function benchmarkBrowser() {
+export async function benchmarkBrowser(useRust = false) {
 	const origin = "https://liatris-benchmark.test";
 	const { profile, sha256 } = compiled;
 	const wasm = await readFile(
@@ -14,6 +14,26 @@ export async function benchmarkBrowser() {
 		),
 	);
 	const root = new URL("../dist/demo/src/", import.meta.url);
+	const experiment = useRust
+		? {
+				module: await readFile(
+					new URL(
+						"../experiments/event-core/target/wasm32-unknown-unknown/release/liatris_event_core_experiment.wasm",
+						import.meta.url,
+					),
+				),
+				shim: await readFile(
+					new URL(
+						"../experiments/event-core/ts/browser-records.js",
+						import.meta.url,
+					),
+				),
+				files: new URL(
+					"../dist/event-core/experiments/event-core/ts/",
+					import.meta.url,
+				),
+			}
+		: undefined;
 	const scenarios = [
 		{ cards: 40, delayMs: 0 },
 		{ cards: 40, delayMs: 40 },
@@ -57,6 +77,38 @@ export async function benchmarkBrowser() {
 								})),
 							});
 						}
+						if (experiment) {
+							if (path === "/event-core.wasm")
+								return route.fulfill({
+									contentType: "application/wasm",
+									body: experiment.module,
+								});
+							if (path === "/records.js")
+								return route.fulfill({
+									contentType: "text/javascript",
+									body: experiment.shim,
+								});
+							if (path === "/records-reference.js")
+								return route.fulfill({
+									contentType: "text/javascript",
+									body: await readFile(new URL("records.js", root)),
+								});
+							if (path === "/src/fields.js")
+								return route.fulfill({
+									contentType: "text/javascript",
+									body: await readFile(new URL("fields.js", root)),
+								});
+							if (
+								path === "/experiment/projection.js" ||
+								path === "/experiment/wasm-adapter.js"
+							)
+								return route.fulfill({
+									contentType: "text/javascript",
+									body: await readFile(
+										new URL(path.slice(12), experiment.files),
+									),
+								});
+						}
 						if (/^\/[a-z-]+\.js$/.test(path)) {
 							return route.fulfill({
 								contentType: "text/javascript",
@@ -68,6 +120,7 @@ export async function benchmarkBrowser() {
 					await page.goto(origin);
 					const measurement = await page.evaluate(
 						async ({ profile, sha256, cards }) => {
+							const loading = performance.now();
 							const [collectorModule, queueModule, exposureModule] =
 								await Promise.all([
 									import("/collector.js" as string) as Promise<
@@ -80,6 +133,7 @@ export async function benchmarkBrowser() {
 										typeof import("../src/impressions.ts")
 									>,
 								]);
+							const moduleLoadMs = performance.now() - loading;
 							const http = collectorModule.createHttpBatchDelivery(
 								profile.endpoint,
 							);
@@ -206,6 +260,7 @@ export async function benchmarkBrowser() {
 							await queue.close();
 							const click = receipts.find((receipt) => receipt.click);
 							return {
+								moduleLoadMs,
 								clickAckMs: click ? click.time - clickAt : null,
 								accepted: latencies.length,
 								dropped,
@@ -219,6 +274,7 @@ export async function benchmarkBrowser() {
 						{ ...scenario, profile, sha256 },
 					);
 					const {
+						moduleLoadMs,
 						accepted,
 						dropped,
 						clickQueued,
@@ -229,6 +285,8 @@ export async function benchmarkBrowser() {
 					console.log(
 						JSON.stringify({
 							stage: "browser",
+							backend: useRust ? "rust-wasm" : "typescript",
+							moduleLoadMs,
 							engine: engine.name(),
 							version: browser.version(),
 							...scenario,

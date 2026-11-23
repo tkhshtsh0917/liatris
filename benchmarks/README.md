@@ -18,4 +18,6 @@ Run each command separately on an idle machine. Each writes JSON lines with the 
 - **Session replay.** Compares JavaScript, the scalar WASM function and an experimental WASM batch using the same numeric session decisions. The batch measurement includes copying the timestamps and reading back every decision. The experiment uses a separate module and excludes IndexedDB, UUID generation and network I/O.
 - **Forwarder.** Launches the Kinesis worker with a local endpoint that acknowledges batches after a fixed delay. The idle scenario inserts one record about 200 ms after the preceding record was marked forwarded. The busy scenario measures 2,000 records from the first downstream request to confirmation of the last batch.
 
+The separate [Rust event projection experiment](../experiments/event-core/README.md) adds `event-projection`, `browser-rust` and `server-batch-native`. Build the experiment first, then alternate the reference and candidate runs under the same conditions.
+
 The browser runs measure queue behavior under a controlled acknowledgement delay. The receiver runs measure local file-backed intake with a local verifier. The forwarder runs measure polling, batching and acknowledged writes with a simulated downstream response.
