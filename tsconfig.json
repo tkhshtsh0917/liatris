@@ -20,6 +20,7 @@
     "server/**/*.ts",
     "demo/**/*.ts",
 		"integration/**/*.ts",
-		"benchmarks/**/*.ts"
+		"benchmarks/**/*.ts",
+		"experiments/**/*.ts"
   ]
 }
