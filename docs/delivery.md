@@ -18,7 +18,7 @@ A batch is a JSON array sent as `application/vnd.liatris.batch+json`. Each reque
 | `rejected` | Remove the record after a permanent failure. |
 | `retry` | Retain the record for retry after a transient failure. |
 
-Missing, duplicate or unusable receipts cause the whole batch to be retried. The reference intake commits accepted events to SQLite before acknowledging them. A replay of identical content within the tenant and application still leaves one stored event. Reusing its event ID with different content is a permanent failure. Single-record `application/json` remains supported with HTTP 204 for acceptance and HTTP 409 for conflicting content. Set `LIATRIS_DB` to choose the database path. By default the demo uses `liatris-demo.sqlite`. Establish retention and deletion policies and protect the database file before storing production data.
+Missing, duplicate or unusable receipts cause the whole batch to be retried. The reference intake commits valid events in a batch in one SQLite transaction before acknowledging them. It rejects content conflicts by event ID. If a storage error rolls back the write, every record in that transaction can be retried. A replay of identical content within the tenant and application still leaves one stored event. Reusing its event ID with different content is a permanent failure. Single-record `application/json` remains supported with HTTP 204 for acceptance and HTTP 409 for conflicting content. Set `LIATRIS_DB` to choose the database path. By default the demo uses `liatris-demo.sqlite`. Establish retention and deletion policies and protect the database file before storing production data.
 
 ## Streaming destination contract
 

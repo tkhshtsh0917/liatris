@@ -4,6 +4,7 @@ import {
 	batchMediaType,
 	maxBatchBytes,
 	maxBatchEvents,
+	readBatchReceipts,
 } from "../src/batch.ts";
 import type { Profile } from "../src/profile.ts";
 import { type Envelope, maxRecordBytes } from "../src/records.ts";
@@ -11,7 +12,13 @@ import { createIntakeAccess, type IntakeAccess } from "./access.ts";
 import { EventConflictError } from "./intake-error.ts";
 import { isUuidV4, validateRecord } from "./validate.ts";
 
-type HttpReceiverOptions = IntakeAccess & { bodyTimeoutMs?: number };
+type BatchSink = (
+	records: readonly Envelope[],
+) => Promise<readonly BatchReceipt[]>;
+type HttpReceiverOptions = IntakeAccess & {
+	bodyTimeoutMs?: number;
+	acceptBatch?: BatchSink;
+};
 const bodyTimedOut = Symbol("body timed out");
 
 async function readBoundedBody(request: IncomingMessage, maxBytes: number) {
@@ -63,6 +70,7 @@ export function createHttpReceiver(
 ) {
 	const checkAccess = createIntakeAccess(profile, options);
 	const bodyTimeoutMs = options.bodyTimeoutMs ?? 10_000;
+	const batchSink = options.acceptBatch ?? individualSink(accept);
 	if (
 		!Number.isInteger(bodyTimeoutMs) ||
 		bodyTimeoutMs < 1 ||
@@ -114,7 +122,12 @@ export function createHttpReceiver(
 		}
 
 		if (batch) {
-			const receipts = await acceptBatch(value, profile, profileHash, accept);
+			const receipts = await acceptBatch(
+				value,
+				profile,
+				profileHash,
+				batchSink,
+			);
 			if (!receipts) return reply(response, 400);
 			response
 				.writeHead(200, {
@@ -141,11 +154,32 @@ export function createHttpReceiver(
 	};
 }
 
+function individualSink(
+	accept: (record: Envelope) => Promise<void>,
+): BatchSink {
+	return async (records) => {
+		const receipts: BatchReceipt[] = [];
+		for (const record of records) {
+			const { event_id } = record;
+			try {
+				await accept(record);
+				receipts.push({ event_id, status: "accepted" });
+			} catch (error) {
+				receipts.push({
+					event_id,
+					status: error instanceof EventConflictError ? "rejected" : "retry",
+				});
+			}
+		}
+		return receipts;
+	};
+}
+
 async function acceptBatch(
 	value: unknown,
 	profile: Profile,
 	profileHash: string,
-	accept: (record: Envelope) => Promise<void>,
+	sink: BatchSink,
 ): Promise<BatchReceipt[] | undefined> {
 	if (
 		!Array.isArray(value) ||
@@ -153,35 +187,35 @@ async function acceptBatch(
 		value.length > maxBatchEvents
 	)
 		return;
+
 	const ids = new Set<string>();
+	const records: Envelope[] = [];
+	const receipts = new Map<string, BatchReceipt>();
 	for (const item of value) {
 		const id: unknown = item?.event_id;
 		if (!isUuidV4(id) || ids.has(id)) return;
 		ids.add(id);
-	}
 
-	const receipts: BatchReceipt[] = [];
-	for (const item of value) {
-		const event_id = item.event_id as string;
-		let record: Envelope;
 		try {
 			if (Buffer.byteLength(JSON.stringify(item)) > maxRecordBytes)
 				throw new RangeError("record too large");
-			record = validateRecord(item, profile, profileHash);
+			records.push(validateRecord(item, profile, profileHash));
 		} catch {
-			receipts.push({ event_id, status: "rejected" });
-			continue;
-		}
-
-		try {
-			await accept(record);
-			receipts.push({ event_id, status: "accepted" });
-		} catch (error) {
-			receipts.push({
-				event_id,
-				status: error instanceof EventConflictError ? "rejected" : "retry",
-			});
+			receipts.set(id, { event_id: id, status: "rejected" });
 		}
 	}
-	return receipts;
+
+	if (records.length > 0) {
+		try {
+			for (const receipt of readBatchReceipts(await sink(records), records))
+				receipts.set(receipt.event_id, receipt);
+		} catch {
+			for (const { event_id } of records)
+				receipts.set(event_id, { event_id, status: "retry" });
+		}
+	}
+	return Array.from(
+		ids,
+		(event_id) => receipts.get(event_id) ?? { event_id, status: "retry" },
+	);
 }

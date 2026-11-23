@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { type BatchReceipt, maxBatchEvents } from "../src/batch.ts";
 import type { Profile } from "../src/profile.ts";
 import type { Envelope } from "../src/records.ts";
 import { EventConflictError } from "./intake-error.ts";
@@ -58,25 +59,54 @@ export function openEventStore(path: string, { tenant, application }: Scope) {
 		AND forwarded_at IS NULL
 	`);
 
+	function transaction<T>(write: () => T): T {
+		db.exec("BEGIN IMMEDIATE");
+		try {
+			const value = write();
+			db.exec("COMMIT");
+			return value;
+		} catch (error) {
+			if (db.isTransaction) db.exec("ROLLBACK");
+			throw error;
+		}
+	}
+
+	function acceptRecord(record: Envelope, receivedAt: number) {
+		const body = canonical(record);
+		const { changes } = insert.run(
+			tenant,
+			application,
+			record.event_id,
+			body,
+			receivedAt,
+		);
+		return (
+			changes !== 0 ||
+			find.get(tenant, application, record.event_id)?.envelope === body
+		);
+	}
+
 	return {
 		async accept(record: Envelope): Promise<void> {
-			const body = canonical(record);
-			const { changes } = insert.run(
-				tenant,
-				application,
-				record.event_id,
-				body,
-				Date.now(),
-			);
-			if (
-				changes === 0 &&
-				find.get(tenant, application, record.event_id)?.envelope !== body
-			) {
+			if (!acceptRecord(record, Date.now()))
 				throw new EventConflictError(
 					"event ID already has a different payload",
 				);
-			}
 		},
+
+		/** Commits one HTTP batch, keeping conflicts local to their event IDs. */
+		async acceptBatch(records: readonly Envelope[]): Promise<BatchReceipt[]> {
+			if (records.length === 0 || records.length > maxBatchEvents)
+				throw new RangeError("invalid intake batch size");
+			const now = Date.now();
+			return transaction(() =>
+				records.map((record) => ({
+					event_id: record.event_id,
+					status: acceptRecord(record, now) ? "accepted" : "rejected",
+				})),
+			);
+		},
+
 		pending(limit: number): Envelope[] {
 			if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
 				throw new RangeError("pending limit must be between 1 and 500");
@@ -88,14 +118,9 @@ export function openEventStore(path: string, { tenant, application }: Scope) {
 		markForwarded(ids: readonly string[]) {
 			if (ids.length === 0) return;
 			const now = Date.now();
-			db.exec("BEGIN IMMEDIATE");
-			try {
+			transaction(() => {
 				for (const id of ids) forwarded.run(now, tenant, application, id);
-				db.exec("COMMIT");
-			} catch (error) {
-				db.exec("ROLLBACK");
-				throw error;
-			}
+			});
 		},
 		close() {
 			db.close();

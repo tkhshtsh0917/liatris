@@ -126,6 +126,6 @@ if (display) {
 
 ## 5. 受信 API をつなぐ
 
-プロファイルの `endpoint` に POST ルートを用意します。アプリケーションと同じ HTTPS オリジンでの配信を基本とします。Node.js の参考実装なら、`openEventStore(path, profile)` で保存先を作り、そのルートで `createHttpReceiver(profile, profileHash, store.accept, { audience, verifyBearer })` を使います。`profile` と `profileHash` は手順2で配信した二つのコンパイル済みファイルから読み、ハッシュファイルの末尾の改行は `trim()` で除きます。`verifyBearer` はトークンを認証し、検証済みのテナント、アプリケーション、対象サービス、`liatris:write` 権限、有効期限を返します。既存の受信 API を使う場合は、同じ HTTP 契約で受け付けます。[受信側の入口](../../server/http.ts) · [永続配送](delivery.md) · [認証と本番公開の条件](security.md)
+プロファイルの `endpoint` に POST ルートを用意します。アプリケーションと同じ HTTPS オリジンでの配信を基本とします。Node.js の参考実装なら、`openEventStore(path, profile)` で保存先を作り、そのルートで `createHttpReceiver(profile, profileHash, store.accept, { audience, verifyBearer, acceptBatch: store.acceptBatch })` を使います。`profile` と `profileHash` は手順2で配信した二つのコンパイル済みファイルから読み、ハッシュファイルの末尾の改行は `trim()` で除きます。`verifyBearer` はトークンを認証し、検証済みのテナント、アプリケーション、対象サービス、`liatris:write` 権限、有効期限を返します。既存の受信 API を使う場合は、同じ HTTP 契約で受け付けます。[受信側の入口](../../server/http.ts) · [永続配送](delivery.md) · [認証と本番公開の条件](security.md)
 
 自分のページで手順1と同じ確認をしたら、同意を撤回してもう一度検索します。検索結果が表示され、撤回後の新しい収集 POST が出なければ、組み込みの確認は完了です。すぐに返る `queued` はブラウザ内への保存を表し、受信側の応答本文の `accepted` が、そのイベントの永続保存を確認する応答です。

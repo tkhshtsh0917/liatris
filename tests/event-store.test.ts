@@ -3,9 +3,11 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { openEventStore } from "../server/event-store.ts";
 import { createHttpReceiver } from "../server/http.ts";
+import { batchMediaType } from "../src/batch.ts";
 import type { Envelope } from "../src/records.ts";
 import { compileProfile } from "../tools/profile.ts";
 
@@ -82,6 +84,7 @@ test("returns 204 after storing duplicates and 409 for conflicting data", async 
 		"request",
 		createHttpReceiver(profile, sha256, store.accept, {
 			loopbackOrigin: origin,
+			acceptBatch: store.acceptBatch,
 		}),
 	);
 
@@ -103,5 +106,53 @@ test("returns 204 after storing duplicates and 409 for conflicting data", async 
 		).status,
 		409,
 	);
-	assert.deepEqual(store.pending(5), [event]);
+	const fresh = record();
+	const conflict = {
+		...event,
+		payload: { ...event.payload, session_id: crypto.randomUUID() },
+	};
+	const invalid = { ...record(), profile_hash: "invalid" };
+	const batch = await fetch(origin, {
+		method: "POST",
+		headers: { "content-type": batchMediaType },
+		body: JSON.stringify([conflict, invalid, fresh]),
+	});
+	assert.equal(batch.status, 200);
+	assert.deepEqual(await batch.json(), [
+		{ event_id: conflict.event_id, status: "rejected" },
+		{ event_id: invalid.event_id, status: "rejected" },
+		{ event_id: fresh.event_id, status: "accepted" },
+	]);
+
+	assert.deepEqual(store.pending(5), [event, fresh]);
+});
+
+test("rolls back the whole SQLite batch and accepts the unchanged replay", async (t) => {
+	const directory = await mkdtemp(join(tmpdir(), "liatris-events-"));
+	t.after(() => rm(directory, { recursive: true }));
+	const path = join(directory, "intake.sqlite");
+	const store = openEventStore(path, profile);
+	const fault = new DatabaseSync(path);
+	try {
+		const first = record();
+		const second = record();
+		fault.exec(`CREATE TRIGGER fail_write BEFORE INSERT ON events
+			WHEN NEW.event_id = '${second.event_id}'
+			BEGIN SELECT RAISE(ABORT, 'test write unavailable'); END;`);
+		await assert.rejects(
+			store.acceptBatch([first, second]),
+			/test write unavailable/,
+		);
+		assert.deepEqual(store.pending(5), []);
+
+		fault.exec("DROP TRIGGER fail_write");
+		assert.deepEqual(await store.acceptBatch([first, second]), [
+			{ event_id: first.event_id, status: "accepted" },
+			{ event_id: second.event_id, status: "accepted" },
+		]);
+		assert.deepEqual(store.pending(5), [first, second]);
+	} finally {
+		fault.close();
+		store.close();
+	}
 });

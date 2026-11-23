@@ -135,6 +135,7 @@ test("an independent site captures a search using only the extracted SDK", {
 	const origin = `http://127.0.0.1:${address.port}`;
 	const receive = createHttpReceiver(profile, hash, store.accept, {
 		loopbackOrigin: origin,
+		acceptBatch: store.acceptBatch,
 	});
 	server.on("request", (request: IncomingMessage, response: ServerResponse) => {
 		if (request.url === profile.endpoint) return receive(request, response);

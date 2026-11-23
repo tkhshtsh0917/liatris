@@ -27,7 +27,18 @@ const receive = createHttpReceiver(
 
 		console.log("accepted", record.kind, record.payload.action_name ?? "query");
 	},
-	{ loopbackOrigin: origin },
+	{
+		loopbackOrigin: origin,
+		async acceptBatch(records) {
+			const receipts = await store.acceptBatch(records);
+			for (const [index, receipt] of receipts.entries()) {
+				if (receipt.status !== "accepted") continue;
+				const { kind, payload } = records[index];
+				console.log("accepted", kind, payload.action_name ?? "query");
+			}
+			return receipts;
+		},
+	},
 );
 const files = new Map([
 	["/", ["./index.html", "text/html; charset=utf-8"]],

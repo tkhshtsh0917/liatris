@@ -34,6 +34,7 @@ const store = openEventStore("/tmp/intake.sqlite", profile);
 const token = crypto.randomUUID();
 const receiver = createHttpReceiver(profile, sha256, store.accept, {
 	audience: "integration",
+	acceptBatch: store.acceptBatch,
 	async verifyBearer(credential) {
 		if (credential === token)
 			return {

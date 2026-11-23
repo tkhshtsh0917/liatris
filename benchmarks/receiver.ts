@@ -26,6 +26,7 @@ export async function benchmarkReceiver(batched: boolean) {
 			const instance = createServer(
 				createHttpReceiver(profile, sha256, store.accept, {
 					audience: "benchmark",
+					acceptBatch: store.acceptBatch,
 					async verifyBearer(credential) {
 						if (credential === token)
 							return {
