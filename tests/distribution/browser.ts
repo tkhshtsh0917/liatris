@@ -37,6 +37,12 @@ async function loadSite(directory: string) {
 	assert.equal(checksum, `${digest}  liatris-browser.tar.gz\n`);
 	execFileSync("tar", ["-xzf", fileURLToPath(archive), "-C", directory]);
 	const sdk = join(directory, "liatris-browser");
+	const license = await readFile(new URL("LICENSE", root), "utf8");
+	assert.equal(await readFile(join(sdk, "LICENSE"), "utf8"), license);
+	const manifest = JSON.parse(
+		await readFile(join(sdk, "package.json"), "utf8"),
+	);
+	assert.equal(manifest.license, "MIT");
 
 	const app = await readFile(new URL("app.mjs", example), "utf8");
 	const typeFixture = join(directory, "app.mjs");

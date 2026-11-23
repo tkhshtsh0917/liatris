@@ -45,3 +45,7 @@ inactivityMinutes = 15
 収集プロファイルだけをコンパイルするには `mkdir -p dist && npm run profile -- examples/shop.toml dist/shop.profile.json` を実行します。コンパイラは正規化済み JSON を書き込み、SHA-256 を表示します。
 
 デモは IndexedDB キューと SQLite のリファレンス受信実装を使います。受領済みのイベントは、サーバー側のアダプターで導入先のストリーミング基盤へ転送できます。動作する接続例として Amazon Kinesis Data Streams 用のアダプターを同梱しています。[導入ガイド](docs/ja/integration.md#2-ブラウザ-sdk-を配置しプロファイルをコンパイルする)では、[GitHub Releases](https://github.com/tkhshtsh0917/liatris/releases) のブラウザ SDK を検証して組み込む手順を説明します。
+
+## ライセンス
+
+Liatris は [MIT ライセンス](LICENSE)で配布します。リポジトリに収録している UBI スキーマの複製には [Apache-2.0](schema/upstream/ubi-1.3.0/LICENSE) が適用されます。

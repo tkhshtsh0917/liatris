@@ -18,18 +18,14 @@ await copyFile(
 	new URL("target/wasm32-unknown-unknown/release/liatris_session.wasm", root),
 	new URL("session.wasm", files),
 );
-try {
-	await copyFile(new URL("LICENSE", root), new URL("LICENSE", files));
-} catch (error) {
-	// Local development builds are also useful before a license has been selected.
-	if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-}
-const { version } = JSON.parse(
+await copyFile(new URL("LICENSE", root), new URL("LICENSE", files));
+
+const { version, license } = JSON.parse(
 	await readFile(new URL("package.json", root), "utf8"),
 );
 await writeFile(
 	new URL("package.json", files),
-	`${JSON.stringify({ name: "liatris-browser", version, private: true, type: "module" }, null, 2)}\n`,
+	`${JSON.stringify({ name: "liatris-browser", version, license, private: true, type: "module" }, null, 2)}\n`,
 );
 execFileSync("tar", ["-czf", archive, "liatris-browser"], {
 	cwd: fileURLToPath(output),

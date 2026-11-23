@@ -45,3 +45,7 @@ The defaults are 50% visible card area and 30 minutes of session inactivity. Omi
 To compile a profile separately, run `mkdir -p dist && npm run profile -- examples/shop.toml dist/shop.profile.json`. The compiler writes normalized JSON and prints its SHA-256.
 
 The demo uses an IndexedDB queue and a SQLite reference receiver. Server-side adapters forward accepted events to the deployment’s streaming destination. The repository includes an Amazon Kinesis Data Streams adapter as a working example. The [integration guide](docs/integration.md#2-install-the-browser-sdk-and-compile-a-profile) explains how to verify and install the browser SDK from [GitHub Releases](https://github.com/tkhshtsh0917/liatris/releases).
+
+## License
+
+Liatris is distributed under the [MIT License](LICENSE). The copies of the UBI schemas in this repository are distributed under [Apache-2.0](schema/upstream/ubi-1.3.0/LICENSE).
