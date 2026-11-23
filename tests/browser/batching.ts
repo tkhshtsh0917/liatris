@@ -184,20 +184,36 @@ export function registerBatchingTests(origin: string) {
 						}));
 					},
 				});
-				const consent = await queue.grant();
-				await Promise.all(
-					Array.from({ length: 96 }, () =>
-						queue.enqueue(
-							{
-								event_id: crypto.randomUUID(),
-								profile_hash: "parallel",
-								kind: "event",
-								payload: { action_name: "result_impression" },
-							},
-							consent,
-						),
-					),
-				);
+				const { openOutbox, updateOutbox } = (await import(
+					"/assets/src/outbox-storage.js" as string
+				)) as typeof import("../../src/outbox-storage.ts");
+				await queue.grant();
+				const db = await openOutbox();
+				const scope = JSON.stringify(["test", "parallel"]);
+				try {
+					await updateOutbox(db, scope, (_state, outbox) => {
+						const now = Date.now();
+						for (let i = 0; i < 96; i++) {
+							outbox.put({
+								scope,
+								record: {
+									event_id: crypto.randomUUID(),
+									profile_hash: "parallel",
+									kind: "event",
+									payload: { action_name: "result_impression" },
+								},
+								expiresAt: now + 60_000,
+								nextAttempt: now,
+								attempts: 0,
+								priority: 1,
+							});
+						}
+					});
+				} finally {
+					db.close();
+				}
+
+				queue.resume();
 				await twoStarted.promise;
 				await queue.revoke();
 				await twoAborted.promise;
