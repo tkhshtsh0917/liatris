@@ -9,6 +9,8 @@ import test, { after, before } from "node:test";
 import { chromium, firefox, type Page, type Request, webkit } from "playwright";
 import { openEventStore } from "../../server/event-store.ts";
 import type { Envelope } from "../../src/records.ts";
+import { registerImpressionTests } from "./impressions.ts";
+import { registerRecoveryTests } from "./recovery.ts";
 
 const port = process.env.LIATRIS_BROWSER_TEST_PORT ?? "42881";
 const origin = `http://127.0.0.1:${port}`;
@@ -410,3 +412,6 @@ test("migrates v1 records and consent, honoring the UTF-8 batch byte limit", {
 		await browser.close();
 	}
 });
+
+registerRecoveryTests(origin);
+registerImpressionTests(origin);
