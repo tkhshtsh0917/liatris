@@ -54,6 +54,12 @@ Serve the following files on your application's HTTPS origin. Use a JavaScript M
 
 The archive contains the browser SDK and its TypeScript declarations. Run the profile compiler and the reference receiver from the source checkout. Use the same compiled profile and hash in the receiving application, and deploy the browser and receiver configuration together. The [standalone browser example](../examples/browser/) uses these public paths, and CI tests it against the extracted archive.
 
+### Upgrade from v0.2.0 to v0.3.0
+
+- Replace the browser modules and any TypeScript declarations together. Remove the `loadWasm` option from `createCollector` and remove `session.wasm` from the deployment. If you call `createSessionManager` directly, use `createSessionManager(store, scope, inactivityMinutes?)`. It returns the manager synchronously.
+- Replace calls to the removed `queue.suspend()` with `queue.close()` for local teardown. To resume after closing, create a new queue and collector and confirm the user's current consent. For an explicit withdrawal, call and await `collector.setConsent(false)`.
+- Existing queued events and sessions carry over when IndexedDB upgrades from version 2 to 3. Reload existing tabs to use the new SDK. If an old connection blocks the upgrade, close or reload that tab, then retry the consent update. Once upgraded, v0.2.0 cannot reopen that queue. [Durable delivery](delivery.md)
+
 ## 3. Initialize the collector in your app
 
 Load this in your browser entry point or an ES module. Replace `obtainWriteToken` with the application function that obtains a scoped token for the collection API.
