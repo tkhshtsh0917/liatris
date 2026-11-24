@@ -33,6 +33,9 @@ jobs:
       - run: mise exec -- npm ci
       - run: mise exec -- npm audit --audit-level=high
       - run: mise run check
+      # Firefox requires the runner-mounted home directory to belong to its user.
+      - name: Match the home directory owner to the browser user
+        run: chown "$(id -u)" "$HOME"
       - run: mise exec -- npm run test:browser
       - run: mise exec -- npm run sdk:build
       - run: mise exec -- npm run test:sdk
