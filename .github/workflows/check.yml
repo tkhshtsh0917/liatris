@@ -18,6 +18,10 @@ jobs:
   sdk:
     name: Build and verify browser SDK
     runs-on: ubuntu-24.04
+    container:
+      # Keep the browser image version aligned with Playwright in package.json.
+      image: mcr.microsoft.com/playwright:v1.64.1-noble@sha256:2f05f8a734509a7b3f26a912639488ee08f58a7b292d14d62271bcff9038768f
+      options: --ipc=host
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -29,7 +33,6 @@ jobs:
       - run: mise exec -- npm ci
       - run: mise exec -- npm audit --audit-level=high
       - run: mise run check
-      - run: mise exec -- npm exec -- playwright install --with-deps chromium firefox webkit
       - run: mise exec -- npm run test:browser
       - run: mise exec -- npm run sdk:build
       - run: mise exec -- npm run test:sdk
