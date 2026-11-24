@@ -42,6 +42,15 @@ async function loadSite(directory: string) {
 	const manifest = JSON.parse(
 		await readFile(join(sdk, "package.json"), "utf8"),
 	);
+	const source = JSON.parse(
+		await readFile(new URL("package.json", root), "utf8"),
+	);
+	const lockfile = JSON.parse(
+		await readFile(new URL("package-lock.json", root), "utf8"),
+	);
+	assert.equal(manifest.version, source.version);
+	assert.equal(lockfile.version, source.version);
+	assert.equal(lockfile.packages[""].version, source.version);
 	assert.equal(manifest.license, "MIT");
 
 	const app = await readFile(new URL("app.mjs", example), "utf8");
