@@ -48,6 +48,11 @@ function nextGeneration(
 	return { generation, order: { lineage, revision: revision + 1 } };
 }
 
+/** Waits for preceding work to settle so its error cannot cancel withdrawal. */
+function withdrawalBarrier(after?: Promise<void>) {
+	return Promise.resolve(after).catch(() => {});
+}
+
 /** Identifies one queued withdrawal for a later retry in the same collection scope. */
 export type WithdrawalRetry = Readonly<{
 	scope: string;
@@ -655,14 +660,15 @@ export function createQueuedDelivery({
 			return granting;
 		},
 
-		/** Aborts this tab and deletes session and queued data for every tab in the scope. */
-		revoke(after = Promise.resolve()) {
-			return scheduleWithdrawal(after);
+		/** Stops this tab immediately and clears shared data after any preceding work settles. */
+		revoke(after?: Promise<void>) {
+			return scheduleWithdrawal(withdrawalBarrier(after));
 		},
 
-		/** Resumes an earlier withdrawal without changing a newer generation. */
-		async retryWithdrawal(retry: WithdrawalRetry, after = Promise.resolve()) {
-			return scheduleWithdrawal(after, readWithdrawalRetry(retry));
+		/** Retries an earlier withdrawal after any preceding work settles and preserves newer grants. */
+		async retryWithdrawal(retry: WithdrawalRetry, after?: Promise<void>) {
+			const barrier = withdrawalBarrier(after);
+			return scheduleWithdrawal(barrier, readWithdrawalRetry(retry));
 		},
 
 		/** Shares the session transaction with the same persisted consent generation. */

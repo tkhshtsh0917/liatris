@@ -13,12 +13,17 @@ const heldStages = ["open", "read", "verify"] as const;
 
 export function registerQueueLifecycleTests(origin: string) {
 	for (const engine of [chromium, firefox, webkit]) {
-		test(`${engine.name()} waits for consent withdrawal before closing a queue`, {
+		test(`${engine.name()} waits for withdrawal and retry before closing a queue`, {
 			timeout: 30_000,
 		}, async () => {
 			const browser = await engine.launch();
 			try {
-				for (const failWrite of [false, true]) {
+				for (const mode of [
+					"collector",
+					"rejected-prerequisite",
+					"failed-write",
+				] as const) {
+					const failWrite = mode === "failed-write";
 					const context = await browser.newContext();
 					try {
 						const withdrawing = await context.newPage();
@@ -66,7 +71,7 @@ export function registerQueueLifecycleTests(origin: string) {
 
 						if (failWrite) await failWithdrawalWrite(withdrawing, false);
 						const result = await fixture.evaluate(
-							({ queue, collector, ConsentWithdrawalError }) => {
+							({ queue, collector, ConsentWithdrawalError }, mode) => {
 								const signal = collector.consentSignal;
 								if (!signal)
 									throw new Error("expected active consent before withdrawal");
@@ -77,8 +82,18 @@ export function registerQueueLifecycleTests(origin: string) {
 									throw error;
 								}
 
-								const done = collector.setConsent(false).catch(readRetry);
-								const duplicate = collector.setConsent(false).catch(readRetry);
+								const withdrawal =
+									mode === "rejected-prerequisite"
+										? queue.revoke(
+												Promise.reject(new Error("earlier work failed")),
+											)
+										: collector.setConsent(false);
+								const done = withdrawal.catch(readRetry);
+								const duplicate = queue
+									.revoke(
+										Promise.reject(new Error("duplicate prerequisite failed")),
+									)
+									.catch(readRetry);
 								const closed = queue.close();
 								if (closed !== queue.close())
 									throw new Error("close must be idempotent");
@@ -90,6 +105,7 @@ export function registerQueueLifecycleTests(origin: string) {
 									}),
 								);
 							},
+							mode,
 						);
 
 						await peer.getByText("Collection disabled.").waitFor();
@@ -103,8 +119,11 @@ export function registerQueueLifecycleTests(origin: string) {
 								),
 							);
 							await fixture.evaluate(async ({ setup }, retry) => {
-								const { collector, queue } = setup();
-								const cleanup = collector.retryConsentWithdrawal(retry);
+								const { queue } = setup();
+								const cleanup = queue.retryWithdrawal(
+									retry,
+									Promise.reject(new Error("earlier retry work failed")),
+								);
 								await Promise.all([cleanup, queue.close()]);
 							}, result.retry);
 						}
