@@ -100,7 +100,7 @@ export function createQueuedDelivery({
 	let granting: Promise<AbortSignal> | undefined;
 	let verifiedOrder: ConsentOrder | undefined;
 	const withdrawals = new Map<string, Set<string>>();
-	let withdrawing = false;
+	let withdrawing: { done: Promise<void>; retry: boolean } | undefined;
 	let failedWithdrawal: { target?: WithdrawalRetry } | undefined;
 	let writeGroup: { lease: Lease; writes: PendingWrite[] } | undefined;
 	const encoder = new TextEncoder();
@@ -111,6 +111,10 @@ export function createQueuedDelivery({
 
 	function open() {
 		requireOpenQueue();
+		return connect();
+	}
+
+	function connect() {
 		if (database) return database;
 
 		const connection: Promise<IDBDatabase> = openOutbox().then(
@@ -149,7 +153,6 @@ export function createQueuedDelivery({
 		document.removeEventListener("visibilitychange", wake);
 		openingGrant?.abort(new Error("collection consent setup was stopped"));
 		lease?.controller.abort();
-		if (lease) return { generation: lease.generation, order: lease.order };
 	}
 
 	function notify(reason: DropReason) {
@@ -518,10 +521,6 @@ export function createQueuedDelivery({
 	}
 
 	async function withdraw(fallback?: Generation, retry?: WithdrawalRetry) {
-		requireOpenQueue();
-		if (withdrawing)
-			throw new Error("collection withdrawal is already running");
-		watchRevocation();
 		let target = retry ?? failedWithdrawal?.target;
 		const known = target ? undefined : fallback;
 		if (known) {
@@ -533,9 +532,9 @@ export function createQueuedDelivery({
 		}
 
 		let notified = false;
-		withdrawing = true;
 		try {
-			const db = await open();
+			watchRevocation();
+			const db = await connect();
 			const marker = await updateOutbox(db, scope, (state, outbox) => {
 				if (target) {
 					if (state?.generation === target.marker)
@@ -587,14 +586,48 @@ export function createQueuedDelivery({
 				error,
 				target && Object.freeze({ ...target }),
 			);
-		} finally {
-			withdrawing = false;
 		}
 		failedWithdrawal = undefined;
 	}
 
+	async function scheduleWithdrawal(
+		after: Promise<void>,
+		retry?: WithdrawalRetry,
+	) {
+		requireOpenQueue();
+		if (retry && active)
+			throw new Error("withdrawal retry requires an inactive queue");
+
+		// A repeated withdrawal must not target a grant created by a peer in the meantime.
+		if (!retry && withdrawing && !withdrawing.retry) return withdrawing.done;
+
+		const generation = active && {
+			generation: active.generation,
+			order: active.order,
+		};
+		const previous = withdrawing?.done.catch(() => {});
+		const scheduled = Promise.all([after, previous])
+			.then(() => {
+				if (
+					retry &&
+					failedWithdrawal?.target &&
+					failedWithdrawal.target.marker !== retry.marker
+				)
+					throw new Error("another withdrawal must be completed first");
+
+				return withdraw(generation, retry);
+			})
+			.finally(() => {
+				if (withdrawing?.done === scheduled) withdrawing = undefined;
+			});
+
+		// Register the work before publishing the abort, whose listeners can call close().
+		withdrawing = { done: scheduled, retry: retry !== undefined };
+		stop();
+		return scheduled;
+	}
+
 	return {
-		suspend: stop,
 		readWithdrawalRetry,
 
 		resume() {
@@ -623,24 +656,13 @@ export function createQueuedDelivery({
 		},
 
 		/** Aborts this tab and deletes session and queued data for every tab in the scope. */
-		revoke(previousGeneration?: Generation) {
-			const generation = stop() ?? previousGeneration;
-			return withdraw(generation);
+		revoke(after = Promise.resolve()) {
+			return scheduleWithdrawal(after);
 		},
 
 		/** Resumes an earlier withdrawal without changing a newer generation. */
-		retryWithdrawal(retry: WithdrawalRetry) {
-			if (active || openingGrant)
-				throw new Error("withdrawal retry requires an inactive queue");
-			const target = readWithdrawalRetry(retry);
-
-			if (
-				failedWithdrawal?.target &&
-				failedWithdrawal.target.marker !== target.marker
-			)
-				throw new Error("another withdrawal must be completed first");
-
-			return withdraw(undefined, target);
+		async retryWithdrawal(retry: WithdrawalRetry, after = Promise.resolve()) {
+			return scheduleWithdrawal(after, readWithdrawalRetry(retry));
 		},
 
 		/** Shares the session transaction with the same persisted consent generation. */
@@ -697,19 +719,21 @@ export function createQueuedDelivery({
 			return promise;
 		},
 
-		/** Stops delivery and releases resources for this queue instance. */
+		/** Stops delivery and releases resources after scheduled withdrawals settle. */
 		close() {
 			if (closing) return closing;
 
-			closing = Promise.resolve(database).then(
-				(db) => db?.close(),
-				() => {},
+			closing = (withdrawing?.done.catch(() => {}) ?? Promise.resolve()).then(
+				async () => {
+					channel?.close();
+					channel = undefined;
+					const db = await database?.catch(() => undefined);
+					database = undefined;
+					db?.close();
+				},
 			);
-			database = undefined;
 			wakeRequested = false;
 			stop();
-			channel?.close();
-			channel = undefined;
 			return closing;
 		},
 	};

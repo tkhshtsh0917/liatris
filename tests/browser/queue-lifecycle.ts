@@ -7,12 +7,117 @@ import {
 	holdGrantTransaction,
 } from "./grant-fixture.ts";
 import { openSearch, submission } from "./search-fixture.ts";
-import { failWithdrawalWrite } from "./withdrawal-fixture.ts";
+import { failWithdrawalWrite, pendingRecords } from "./withdrawal-fixture.ts";
 
 const heldStages = ["open", "read", "verify"] as const;
 
 export function registerQueueLifecycleTests(origin: string) {
 	for (const engine of [chromium, firefox, webkit]) {
+		test(`${engine.name()} waits for consent withdrawal before closing a queue`, {
+			timeout: 30_000,
+		}, async () => {
+			const browser = await engine.launch();
+			try {
+				for (const failWrite of [false, true]) {
+					const context = await browser.newContext();
+					try {
+						const withdrawing = await context.newPage();
+						const peer = await context.newPage();
+						await withdrawing.goto(origin);
+						const fixture = await withdrawing.evaluateHandle(async () => {
+							const { createCollector, ConsentWithdrawalError } = (await import(
+								"/assets/src/collector.js" as string
+							)) as typeof import("../../src/collector.ts");
+							const { createQueuedDelivery } = (await import(
+								"/assets/src/queued-delivery.js" as string
+							)) as typeof import("../../src/queued-delivery.ts");
+							const { profile, sha256: profileHash } = await (
+								await fetch("/demo-config.json")
+							).json();
+
+							function setup() {
+								const queue = createQueuedDelivery({
+									profile,
+									profileHash,
+									async send() {},
+								});
+								return {
+									queue,
+									collector: createCollector({ profile, profileHash, queue }),
+								};
+							}
+
+							const fixture = setup();
+							await fixture.collector.setConsent(true);
+							return { ...fixture, setup, ConsentWithdrawalError };
+						});
+
+						const search = await openSearch(peer, origin);
+						await context.route("**/api/ubi", (route) =>
+							route.fulfill({ status: 503, headers: { "retry-after": "60" } }),
+						);
+						const queued = peer.waitForResponse(
+							(response) =>
+								response.status() === 503 && !!submission(response.request()),
+						);
+						await search.click();
+						const original = submission((await queued).request());
+						assert.ok(original);
+
+						if (failWrite) await failWithdrawalWrite(withdrawing, false);
+						const result = await fixture.evaluate(
+							({ queue, collector, ConsentWithdrawalError }) => {
+								const signal = collector.consentSignal;
+								if (!signal)
+									throw new Error("expected active consent before withdrawal");
+
+								function readRetry(error: unknown) {
+									if (error instanceof ConsentWithdrawalError && error.retry)
+										return error.retry;
+									throw error;
+								}
+
+								const done = collector.setConsent(false).catch(readRetry);
+								const duplicate = collector.setConsent(false).catch(readRetry);
+								const closed = queue.close();
+								if (closed !== queue.close())
+									throw new Error("close must be idempotent");
+								return Promise.all([done, duplicate, closed]).then(
+									([retry, duplicateRetry]) => ({
+										retry,
+										duplicateRetry,
+										aborted: signal.aborted,
+									}),
+								);
+							},
+						);
+
+						await peer.getByText("Collection disabled.").waitFor();
+						assert.equal(result.aborted, true);
+						assert.equal(!!result.retry, failWrite);
+						assert.deepEqual(result.duplicateRetry, result.retry);
+						if (result.retry) {
+							assert.ok(
+								(await pendingRecords(peer)).some(
+									({ record }) => record.event_id === original.event_id,
+								),
+							);
+							await fixture.evaluate(async ({ setup }, retry) => {
+								const { collector, queue } = setup();
+								const cleanup = collector.retryConsentWithdrawal(retry);
+								await Promise.all([cleanup, queue.close()]);
+							}, result.retry);
+						}
+						assert.deepEqual(await pendingRecords(peer), []);
+					} finally {
+						await context.close();
+					}
+				}
+			} finally {
+				await browser.close();
+			}
+		});
+
 		test(`${engine.name()} keeps a closed queue inactive at every grant stage`, {
 			timeout: 30_000,
 		}, async () => {

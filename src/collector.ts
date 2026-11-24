@@ -72,17 +72,20 @@ export function createCollector({
 	let sessionTail = Promise.resolve();
 	let store: SessionStore | undefined;
 	let consentVersion = 0;
-	let cleanupRequired = false;
+	let pendingCleanup: Promise<void> | undefined;
 	let latestAssignment: Promise<Activity | undefined> | undefined;
 	let waiting: ActivityGroup | undefined;
 
-	function withinSession<T>(operation: () => Promise<T>) {
-		const running = sessionTail.then(operation);
+	function followSession<T>(running: Promise<T>) {
 		sessionTail = running.then(
 			() => {},
 			() => {},
 		);
 		return running;
+	}
+
+	function withinSession<T>(operation: () => Promise<T>) {
+		return followSession(sessionTail.then(operation));
 	}
 
 	async function getSession(signal: AbortSignal) {
@@ -138,7 +141,7 @@ export function createCollector({
 		const version = ++consentVersion;
 		await sessionTail;
 		if (version !== consentVersion) return;
-		if (cleanupRequired)
+		if (pendingCleanup)
 			throw new Error(
 				"session cleanup must complete before collection resumes",
 			);
@@ -176,23 +179,24 @@ export function createCollector({
 
 		const previous = consent;
 		consent = undefined;
-		const previousGeneration = queue?.suspend();
 		latestAssignment = undefined;
-		cleanupRequired = true;
-		const cleanup = withinSession(async () => {
-			cleanupRequired = true;
-			if (queue) {
-				if (retry) await queue.retryWithdrawal(retry);
-				else await queue.revoke(previousGeneration);
-			} else {
-				store ??= await initializeStore();
-				await clearSession(store, profile);
-			}
+
+		const cleanup = queue
+			? retry
+				? queue.retryWithdrawal(retry, sessionTail)
+				: queue.revoke(sessionTail)
+			: sessionTail.then(async () => {
+					store ??= await initializeStore();
+					await clearSession(store, profile);
+				});
+		const completed = cleanup.then(() => {
 			session = undefined;
-			cleanupRequired = false;
+			if (pendingCleanup === completed) pendingCleanup = undefined;
 		});
+		pendingCleanup = completed;
+		followSession(completed);
 		previous?.abort();
-		await cleanup;
+		await completed;
 	}
 
 	async function capture(
